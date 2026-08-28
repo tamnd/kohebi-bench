@@ -64,7 +64,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runtime: ["pypy3.11", "graalpy-25.3"]
+        # graalpy-25.2, not 25.3. GraalPy tagged 25.3 as graal-25.3.4.1, and
+        # setup-python resolves versions through semver, which rejects a four
+        # component version outright. 25.2.4 is the newest one it can install.
+        runtime: ["pypy3.11", "graalpy-25.2"]
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.0.0
@@ -95,7 +98,7 @@ jobs:
         continue-on-error: true
         uses: actions/setup-python@v7.0.0
         with:
-          python-version: "graalpy-25.3"
+          python-version: "graalpy-25.2"
       - run: python3.14 -m pip install -e .
       - name: Measure
         run: |
