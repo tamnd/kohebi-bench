@@ -15,6 +15,7 @@ enforced by review.
 from __future__ import annotations
 
 import json
+import os
 import platform
 import subprocess
 from dataclasses import dataclass, field
@@ -186,14 +187,18 @@ def describe_environment(runtimes: list[Runtime] | None = None) -> dict[str, str
 
 
 def _cpu_count() -> int:
-    try:
-        import os
+    """Cores this process may use, which is not always the cores the machine has.
 
-        return len(os.sched_getaffinity(0))  # type: ignore[attr-defined]
-    except (ImportError, AttributeError):
-        import os
-
-        return os.cpu_count() or 0
+    Inside a container or under taskset the affinity mask is the honest number
+    and os.cpu_count() is not. Reached through getattr rather than a
+    type: ignore because sched_getaffinity is Linux only, so the ignore is
+    required when mypy runs on macOS and flagged as unused when it runs on
+    Linux, and CI does one while most of us do the other.
+    """
+    affinity = getattr(os, "sched_getaffinity", None)
+    if affinity is not None:
+        return len(affinity(0))
+    return os.cpu_count() or 0
 
 
 def git_revision() -> str:

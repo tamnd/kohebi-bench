@@ -54,5 +54,9 @@ addopts = "-ra --strict-markers --strict-config"
 
 [tool.mypy]
 python_version = "3.11"
+# Pinned so that a check passing locally passes in CI. Without this, mypy
+# follows the host platform and platform-specific code type checks
+# differently on macOS and on Linux.
+platform = "linux"
 strict = true
 files = ["src"]
