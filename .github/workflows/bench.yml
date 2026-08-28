@@ -27,8 +27,8 @@ jobs:
     name: Lint and types
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
         with:
           python-version: "3.14"
       - uses: astral-sh/setup-uv@v10.0.1
@@ -47,8 +47,8 @@ jobs:
       matrix:
         python: ["3.12", "3.13", "3.14", "3.15-dev"]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
         with:
           python-version: ${{ matrix.python }}
           allow-prereleases: true
@@ -64,10 +64,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runtime: ["pypy3.11", "graalpy-24.2"]
+        runtime: ["pypy3.11", "graalpy-25.3"]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
         with:
           python-version: ${{ matrix.runtime }}
       # Not the dev extra. It pulls mypy, which builds a C extension that does
@@ -83,19 +83,19 @@ jobs:
     name: Baseline measurement
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
         with:
           python-version: "3.14"
       - name: Install PyPy
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: "pypy3.11"
       - name: Install GraalPy
         continue-on-error: true
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@v7.0.0
         with:
-          python-version: "graalpy-24.2"
+          python-version: "graalpy-25.3"
       - run: python3.14 -m pip install -e .
       - name: Measure
         run: |
@@ -105,7 +105,7 @@ jobs:
             --out results/ci
       - name: Summarise
         run: cat results/ci/report.md >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7.0.1
         with:
           name: results-ci
           path: results/ci

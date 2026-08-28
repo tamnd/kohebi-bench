@@ -66,7 +66,7 @@ Every benchmark computes a checksum and prints it. Without that, a sufficiently 
 | CPython with the JIT | 3.14, `PYTHON_JIT=1` | Their fastest configuration, so the comparison stays fair |
 | CPython free-threaded | 3.14t | The relevant baseline for anything concurrent |
 | PyPy | 7.3.23, targeting Python 3.11 | The incumbent fast Python |
-| GraalPy | 25.3 | The other incumbent, and the compatibility standard |
+| GraalPy | 25.3, targeting Python 3.13 | The other incumbent, and the compatibility standard |
 
 PyPy and GraalPy both stopped at roughly 4x on general workloads, from completely different technology. That is the strongest available evidence about how hard the 10x target is, which is why both are in the default comparison rather than left out.
 
