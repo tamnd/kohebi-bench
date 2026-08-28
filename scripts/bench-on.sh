@@ -8,9 +8,10 @@
 # files to the host, run the harness there with the host recorded in the
 # report, copy the results back into results/<host>/.
 #
-#   scripts/bench-on.sh gpc
-#   scripts/bench-on.sh server3 --runs 50
-#   scripts/bench-on.sh gpc benchmarks/micro --runtime cpython
+#   scripts/bench-on.sh gpc run
+#   scripts/bench-on.sh server3 run --runs 50
+#   scripts/bench-on.sh gpc run benchmarks/micro --runtime cpython
+#   scripts/bench-on.sh gpc lex --kohebi ./kohebi
 #
 # The host is an ssh destination, so anything in ~/.ssh/config works. Nothing
 # is installed on the remote side: the harness is standard library only and
@@ -18,8 +19,13 @@
 # from one directory under /tmp.
 set -eu
 
-host=${1:?usage: scripts/bench-on.sh HOST [kohebi-bench args...]}
+host=${1:?usage: scripts/bench-on.sh HOST COMMAND [kohebi-bench args...]}
 shift
+# `run` when no command is given, since that is what almost every invocation
+# wants and spelling it out every time is noise.
+if [ "$#" -eq 0 ]; then
+    set -- run
+fi
 
 remote_dir=${KOHEBI_BENCH_REMOTE_DIR:-/tmp/kohebi-bench}
 local_out="results/$host"

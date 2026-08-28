@@ -4,6 +4,10 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+# Raw samples are not committed. A few hundred kilobytes per run, completely
+# different every time, and unreadable in a diff. The markdown summary next to
+# it is the part a human can check.
+results/**/results.json
 /results/local/
 *.egg-info/
 dist/

@@ -32,6 +32,11 @@ class Report:
     measurements: list[Measurement]
     environment: dict[str, str] = field(default_factory=dict)
     generated_at: str = ""
+    #: Anything about this particular run that a reader needs in order to know
+    #: what was measured. What the corpus was, how big it was, what got left
+    #: out of it. Free text, and it goes near the top of the report because a
+    #: number whose method is a paragraph further down gets quoted without it.
+    notes: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.generated_at:
@@ -72,6 +77,7 @@ class Report:
                     "generated_at": self.generated_at,
                     "baseline": self.baseline,
                     "environment": self.environment,
+                    "notes": self.notes,
                     "geomean_speedup": self.geomeans(),
                     "measurements": [m.summary() for m in self.measurements],
                 },
@@ -87,6 +93,11 @@ class Report:
             "",
             f"Generated {self.generated_at}.",
             f"Baseline: `{self.baseline}`.",
+        ]
+        if self.notes:
+            lines += ["", "## What was measured", ""]
+            lines += [f"- {n}" for n in self.notes]
+        lines += [
             "",
             "## Environment",
             "",
