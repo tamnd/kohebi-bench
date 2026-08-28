@@ -6,7 +6,7 @@ Benchmarks for [kohebi](https://github.com/tamnd/kohebi), a Python runtime writt
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
 > [!NOTE]
-> kohebi is not implemented yet, so nothing here has measured it. What the harness currently produces is a baseline: what CPython, PyPy, and GraalPy do on this machine, on these programs, so that the first kohebi number has something honest to be compared against. The harness is built first on purpose, because a benchmark suite written after the runtime tends to be a suite the runtime happens to win.
+> kohebi cannot run a Python program yet, so `kohebi-bench run` still measures CPython, PyPy, and GraalPy alone. What it can do is lex, so `kohebi-bench lex` measures that against CPython's `tokenize` module and is the first real kohebi number in here. The harness was built before the runtime on purpose, because a benchmark suite written afterwards tends to be one the runtime happens to win.
 
 ## The rule
 
@@ -26,14 +26,27 @@ Four decisions follow from that, and none of them are negotiable:
 
 ```console
 $ pip install -e '.[dev]'
-$ kohebi-bench                                    # every installed runtime, 30 runs
-$ kohebi-bench --runtime cpython --runtime pypy   # just these two
-$ kohebi-bench benchmarks/micro --runs 50 --out results/local
+$ kohebi-bench run                                    # every installed runtime, 30 runs
+$ kohebi-bench run --runtime cpython --runtime pypy   # just these two
+$ kohebi-bench run benchmarks/micro --runs 50 --out results/local
+$ kohebi-bench lex --kohebi ../kohebi/target/release/kohebi
 ```
 
 Runtimes that are not installed are skipped with a note rather than silently omitted. A benchmark that fails or times out is recorded as a failure and appears in the report, because a runtime that cannot run a benchmark has not won it.
 
 By default the run fails if the machine is too noisy to draw conclusions from, meaning fewer than 5 samples or an interquartile range above 5% of the median. `--allow-noisy` downgrades that to a warning, and is for local iteration rather than for anything published.
+
+## The lexer, which is the part that exists
+
+`kohebi-bench lex` tokenizes a corpus with both kohebi and CPython's `tokenize` module and times them against each other. The corpus defaults to the standard library of the interpreter running the harness, which is around 1900 files and 35 MiB of Python written by many hands over thirty years, and is on every machine that can run this.
+
+Both sides print `<tokens> <path>` for every file, and those outputs are compared before anything is timed. If they disagree the run stops and prints the file and the two counts. A speed number from an implementation that produced the wrong answer is worse than no number at all.
+
+Both sides read bytes, decode them as UTF-8, and produce tokens with line and column positions, because timing one implementation doing less work than the other is the exact mistake this repository exists to prevent. The process startup cost of each side is measured separately on an empty corpus and reported next to the throughput, so a reader can take it back out.
+
+A file that CPython's own tokenizer refuses is left out, and so is one that kohebi refuses. There is at least one of the second kind in every standard library: `tokenize` reports `€ = 2` as a name while the compiler rejects the character, and kohebi follows the compiler because that is what a user sees. Each exclusion is printed with its reason and counted in the report. More than 25 of them stops the run, because at that point it is a regression rather than a known corner, and a benchmark that shrinks its own corpus until it passes is worthless.
+
+Agreement itself is decided in [tamnd/kohebi-compat](https://github.com/tamnd/kohebi-compat), which compares token by token including positions and text. The check here is only that both sides did the same job before either was timed.
 
 ## What is measured
 
@@ -74,15 +87,16 @@ PyPy and GraalPy both stopped at roughly 4x on general workloads, from completel
 
 `--out DIR` writes `results.json` and `report.md`. The JSON records every sample, the resolved version string of every runtime, the git revision, and the machine description, so that a result can be argued with rather than only accepted.
 
-Results published from CI are stored in `results/`, including the ones that are unflattering. Publishing only the good runs is the failure mode this whole repository is built to avoid.
+Results published from real machines are stored in `results/<host>/report.md`, including the unflattering ones. Publishing only the good runs is the failure mode this whole repository is built to avoid. The raw `results.json` is not committed: it is a few hundred kilobytes of samples per run, it changes completely every time, and a repository whose history is mostly regenerated JSON is one nobody can read. Pass `--out` and keep it locally, or take it from the CI artifact.
 
 CI results come from GitHub-hosted runners, which are shared machines and are noisy. They are useful for catching a large regression and useless for a 5% claim. Anything published as a headline number needs a quiet machine with frequency scaling and turbo disabled, and the report says which one it came from.
 
 ## Running on real hardware
 
 ```console
-$ scripts/bench-on.sh gpc --runs 30
-$ scripts/bench-on.sh server3 benchmarks/micro
+$ scripts/bench-on.sh gpc run --runs 30
+$ scripts/bench-on.sh server3 run benchmarks/micro
+$ scripts/bench-on.sh gpc lex
 ```
 
 The script copies the tracked files over ssh, runs the harness there, and pulls the results back into `results/<host>/`. Nothing is installed on the remote side: the harness is standard library only and runs from `PYTHONPATH`, so the machine is left as it was found apart from one directory under `/tmp`.

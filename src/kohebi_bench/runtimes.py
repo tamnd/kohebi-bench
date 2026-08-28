@@ -27,6 +27,10 @@ class Runtime:
     name: str
     argv: tuple[str, ...]
     note: str = ""
+    #: How to ask this one what version it is, when appending `--version` to
+    #: `argv` would not work. A runtime whose argv ends in a flag that takes a
+    #: value would otherwise be asked to tokenize a file called `--version`.
+    version_argv: tuple[str, ...] | None = None
 
     def available(self) -> bool:
         return shutil.which(self.argv[0]) is not None
@@ -36,7 +40,7 @@ class Runtime:
             return "not installed"
         try:
             proc = subprocess.run(
-                [*self.argv, "--version"],
+                list(self.version_argv or (*self.argv, "--version")),
                 capture_output=True,
                 text=True,
                 timeout=60,

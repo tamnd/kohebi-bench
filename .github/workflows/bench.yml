@@ -102,7 +102,7 @@ jobs:
       - run: python3.14 -m pip install -e .
       - name: Measure
         run: |
-          python3.14 -m kohebi_bench benchmarks \
+          python3.14 -m kohebi_bench run benchmarks \
             --runs "${{ inputs.runs || 10 }}" \
             --allow-noisy \
             --out results/ci
@@ -115,10 +115,50 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+  # The first piece of kohebi that exists, measured against CPython on every
+  # change. A shared runner cannot defend a 5% difference, and this is not
+  # trying to: what it catches is the lexer disagreeing with CPython about how
+  # many tokens a file has, and a throughput number falling off a cliff.
+  lex:
+    name: Lexer against CPython tokenize
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7.0.1
+        with:
+          repository: tamnd/kohebi
+          path: .kohebi
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.14"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          workspaces: .kohebi
+      - run: cargo build --release --locked --bin kohebi
+        working-directory: .kohebi
+      - run: python -m pip install -e .
+      - name: Measure
+        run: |
+          kohebi-bench lex \
+            --kohebi .kohebi/target/release/kohebi \
+            --runs 5 \
+            --allow-noisy \
+            --out results/ci-lex
+      - name: Summarise
+        if: always()
+        run: cat results/ci-lex/report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: results-ci-lex
+          path: results/ci-lex
+          if-no-files-found: error
+          retention-days: 90
+
   bench-ok:
     name: Benchmarks
     if: always()
-    needs: [lint, harness, measure]
+    needs: [lint, harness, measure, lex]
     runs-on: ubuntu-24.04
     steps:
       - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
