@@ -31,7 +31,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
       - run: uv pip install --system -e '.[dev]'
@@ -70,7 +70,10 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.runtime }}
-      - run: python -m pip install -e '.[dev]'
+      # Not the dev extra. It pulls mypy, which builds a C extension that does
+      # not compile against GraalPy's C API, and this job is about whether the
+      # harness runs, not about type checking it a second time.
+      - run: python -m pip install -e . pytest
       - run: python -m pytest tests -q
 
   # Shared runners are noisy, so this job is a smoke test that produces a real
