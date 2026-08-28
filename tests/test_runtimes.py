@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from kohebi_bench.report import Report
+from kohebi_bench.report import Report, cpu_model, describe_environment, publishable
 from kohebi_bench.runtimes import CPYTHON, Measurement, Runtime, collect, measure
 from kohebi_bench.stats import Distribution
 
@@ -152,6 +152,47 @@ class TestCollect:
         m = measure(CPYTHON, path, runs=1, warmup=0, timeout_s=300)
         assert not m.failed, f"{path.name} failed:\n{m.error}"
 
+    def test_dotfiles_are_not_benchmarks(self, tmp_path: Path):
+        """Copying this tree from macOS leaves an AppleDouble beside every file.
+
+        The first run on real hardware measured eight of them, failed all
+        eight, and listed them in the report as benchmarks.
+        """
+        (tmp_path / "real.py").touch()
+        (tmp_path / "._real.py").touch()
+        assert [p.name for p in collect(tmp_path)] == ["real.py"]
+
 
 def test_the_harness_runs_on_this_interpreter():
     assert Runtime("self", (sys.executable,)).available()
+
+
+class TestEnvironment:
+    """The machine description is what makes a number from a real host checkable."""
+
+    def test_a_clean_machine_has_nothing_against_it(self):
+        env = {"cpu_governor": "performance", "turbo": "disabled", "virtualised": "none"}
+        assert publishable(env) == []
+
+    def test_a_shared_vps_is_flagged(self):
+        """server1 and server3 are KVM guests, so the report has to say so.
+
+        A number measured next to somebody else's workload is fine for
+        noticing a 2x regression and cannot defend a 5% one.
+        """
+        env = {"cpu_governor": "performance", "turbo": "disabled", "virtualised": "kvm"}
+        reasons = publishable(env)
+        assert len(reasons) == 1
+        assert "kvm" in reasons[0]
+
+    def test_a_moving_clock_is_flagged(self):
+        env = {"cpu_governor": "powersave", "turbo": "enabled", "virtualised": "none"}
+        assert len(publishable(env)) == 2
+
+    def test_the_host_can_be_named_for_the_report(self, monkeypatch):
+        monkeypatch.setenv("KOHEBI_BENCH_HOST", "gpc")
+        assert describe_environment()["host"] == "gpc"
+
+    def test_the_cpu_model_is_the_chip_not_the_architecture(self):
+        """platform.processor() answers x86_64 on Linux, which names nothing."""
+        assert cpu_model() != "x86_64"

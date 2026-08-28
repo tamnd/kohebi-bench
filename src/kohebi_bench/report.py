@@ -95,6 +95,16 @@ class Report:
         ]
         lines += [f"| {k} | {v} |" for k, v in sorted(self.environment.items())]
 
+        caveats = publishable(self.environment)
+        if caveats:
+            lines += [
+                "",
+                "> [!NOTE]",
+                "> This machine is fine for catching a regression and is not a source of a "
+                "headline number:",
+            ]
+            lines += [f"> - {c}" for c in caveats]
+
         noisy = [m for m in self.measurements if not m.failed and not m.wall.stable]
         if noisy:
             lines += [
@@ -176,14 +186,95 @@ class Report:
 def describe_environment(runtimes: list[Runtime] | None = None) -> dict[str, str]:
     """Everything a reader needs to reproduce or discount the numbers."""
     env = {
+        "host": os.environ.get("KOHEBI_BENCH_HOST") or platform.node(),
         "platform": platform.platform(),
         "machine": platform.machine(),
-        "processor": platform.processor() or "unknown",
+        "processor": cpu_model(),
         "cpu_count": str(_cpu_count()),
+        "cpu_governor": _read_sysfs("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"),
+        "turbo": _turbo_state(),
+        "virtualised": _virtualisation(),
     }
     for r in runtimes or []:
         env[f"version.{r.name}"] = r.version()
     return env
+
+
+def publishable(env: dict[str, str]) -> list[str]:
+    """Reasons this machine should not be the source of a headline number.
+
+    None of these stop a run. They go in the report, because the useful thing
+    is not preventing a measurement on a noisy box, it is preventing a
+    measurement on a noisy box from being quoted as if it came from a quiet one.
+    """
+    reasons = []
+    if env.get("cpu_governor") not in ("performance", "unknown"):
+        reasons.append(
+            f"CPU governor is {env.get('cpu_governor')}, so clock speed moves during the run"
+        )
+    if env.get("turbo") == "enabled":
+        reasons.append(
+            "turbo is enabled, so the first benchmark runs on a colder core than the last"
+        )
+    virt = env.get("virtualised", "unknown")
+    if virt not in ("none", "unknown"):
+        reasons.append(f"running under {virt}, where the host schedules other tenants against us")
+    return reasons
+
+
+def cpu_model() -> str:
+    """The actual chip, which platform.processor() does not give you on Linux."""
+    cpuinfo = Path("/proc/cpuinfo")
+    if cpuinfo.exists():
+        for line in cpuinfo.read_text(errors="replace").splitlines():
+            if line.startswith("model name"):
+                return line.split(":", 1)[1].strip()
+    if platform.system() == "Darwin":
+        out = _run(["sysctl", "-n", "machdep.cpu.brand_string"])
+        if out:
+            return out
+    return platform.processor() or "unknown"
+
+
+def _turbo_state() -> str:
+    """Intel and AMD spell the same switch two different ways."""
+    no_turbo = _read_sysfs("/sys/devices/system/cpu/intel_pstate/no_turbo")
+    if no_turbo in ("0", "1"):
+        return "disabled" if no_turbo == "1" else "enabled"
+    boost = _read_sysfs("/sys/devices/system/cpu/cpufreq/boost")
+    if boost in ("0", "1"):
+        return "disabled" if boost == "0" else "enabled"
+    return "unknown"
+
+
+def _virtualisation() -> str:
+    """Whether we are on metal, in a VM, or in WSL.
+
+    A shared VPS can be perfectly good for spotting a 2x regression and is a
+    bad place to defend a 5% one, so this belongs in the report rather than in
+    a footnote someone writes later from memory.
+    """
+    detected = _run(["systemd-detect-virt"])
+    if detected:
+        return detected
+    if "microsoft" in platform.release().lower():
+        return "wsl"
+    return "unknown"
+
+
+def _read_sysfs(path: str) -> str:
+    try:
+        return Path(path).read_text().strip()
+    except OSError:
+        return "unknown"
+
+
+def _run(argv: list[str]) -> str:
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return proc.stdout.strip()
 
 
 def _cpu_count() -> int:

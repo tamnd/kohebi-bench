@@ -78,6 +78,24 @@ Results published from CI are stored in `results/`, including the ones that are 
 
 CI results come from GitHub-hosted runners, which are shared machines and are noisy. They are useful for catching a large regression and useless for a 5% claim. Anything published as a headline number needs a quiet machine with frequency scaling and turbo disabled, and the report says which one it came from.
 
+## Running on real hardware
+
+```console
+$ scripts/bench-on.sh gpc --runs 30
+$ scripts/bench-on.sh server3 benchmarks/micro
+```
+
+The script copies the tracked files over ssh, runs the harness there, and pulls the results back into `results/<host>/`. Nothing is installed on the remote side: the harness is standard library only and runs from `PYTHONPATH`, so the machine is left as it was found apart from one directory under `/tmp`.
+
+Every report names the machine it came from and says what is wrong with it. The environment table records the CPU model, the governor, whether turbo is on, and whether the kernel thinks it is running under a hypervisor, and a report from a machine that fails any of those tests carries a note saying it is fit for catching regressions rather than for publishing a number.
+
+| Host | What it is | Fit for |
+| --- | --- | --- |
+| `gpc` | i9-13900K, 32 threads, 31 GiB, Ubuntu under WSL2 | The reference machine, and the only one with all four runtimes installed |
+| `server1`, `server2`, `server3` | Shared KVM guests, 4 to 8 vCPUs of EPYC | Regressions and smoke runs, not headline numbers |
+
+`gpc` is a desktop running WSL2, which is honest about what it is: good enough that the intervals in `results/gpc/` are tight, not good enough to defend a few percent. The published 10x claim, when there is something to claim, needs a machine with nothing else on it, the governor pinned to performance, and turbo off.
+
 ## Related
 
 | Repository | Purpose |

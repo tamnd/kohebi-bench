@@ -211,5 +211,12 @@ def measure(
 
 
 def collect(root: Path) -> list[Path]:
-    """Every benchmark under `root`, in a stable order."""
-    return sorted(p for p in root.rglob("*.py") if not p.name.startswith("_"))
+    """Every benchmark under `root`, in a stable order.
+
+    Leading underscore means a helper rather than a benchmark. Leading dot
+    means someone's tooling left a file here: copying this tree from macOS with
+    tar produces an AppleDouble `._name.py` beside every file, and the first
+    remote run measured eight of them, failed all eight, and put them in the
+    report as benchmark results.
+    """
+    return sorted(p for p in root.rglob("*.py") if not p.name.startswith(("_", ".")))
