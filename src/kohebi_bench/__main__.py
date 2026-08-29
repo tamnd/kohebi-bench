@@ -16,7 +16,7 @@ from pathlib import Path
 
 from . import lex as lexmod
 from .report import Report, describe_environment
-from .runtimes import ALL, DEFAULT_COMPARISON, Measurement, at, collect, measure
+from .runtimes import ALL, DEFAULT_COMPARISON, Measurement, at, collect, located, measure
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -37,6 +37,17 @@ def main(argv: list[str] | None = None) -> int:
         help="Runtime to measure. Repeatable. Defaults to every known runtime.",
     )
     run.add_argument("--baseline", default="cpython", choices=sorted(ALL))
+    run.add_argument(
+        "--at",
+        action="append",
+        default=[],
+        metavar="NAME=PATH",
+        help=(
+            "Run NAME from PATH rather than looking its name up. Repeatable. "
+            "Needed wherever several interpreters are installed and PATH cannot "
+            "reach the one you meant, as in `--at cpython=python3.14`."
+        ),
+    )
     run.add_argument(
         "--kohebi",
         default="kohebi",
@@ -109,9 +120,18 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if not args.suite.is_dir():
         parser.error(f"{args.suite} is not a directory")
 
+    where = {}
+    for entry in args.at:
+        name, sep, path = entry.partition("=")
+        if not sep or not path:
+            parser.error(f"--at wants NAME=PATH, got {entry!r}")
+        if name not in ALL:
+            parser.error(f"--at names {name!r}, which is not a runtime: {', '.join(sorted(ALL))}")
+        where[name] = path
+
     chosen = [ALL[n] for n in args.runtime] if args.runtime else list(DEFAULT_COMPARISON)
-    chosen = [at(r, args.kohebi) for r in chosen]
-    baseline = at(ALL[args.baseline], args.kohebi)
+    chosen = [located(at(r, args.kohebi), where) for r in chosen]
+    baseline = located(at(ALL[args.baseline], args.kohebi), where)
     if baseline not in chosen:
         chosen.insert(0, baseline)
 
@@ -122,6 +142,16 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         return 2
     if missing:
         print(f"not installed, skipping: {', '.join(missing)}", file=sys.stderr)
+
+    # Before anything is timed, because a report built from the wrong binary is
+    # worse than no report: every number in it is right except the one that
+    # matters, so it survives being read carefully.
+    wrong = [complaint for r in available if (complaint := r.misidentified())]
+    if wrong:
+        for complaint in wrong:
+            print(f"error: {complaint}", file=sys.stderr)
+        print("fix PATH, or pass the binary explicitly, and run again", file=sys.stderr)
+        return 2
 
     benchmarks = collect(args.suite)
     if not benchmarks:

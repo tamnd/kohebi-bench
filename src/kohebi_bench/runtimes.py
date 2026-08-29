@@ -14,6 +14,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -66,6 +67,10 @@ class Runtime:
     #: `argv` would not work. A runtime whose argv ends in a flag that takes a
     #: value would otherwise be asked to tokenize a file called `--version`.
     version_argv: tuple[str, ...] | None = None
+    #: What `sys.implementation.name` has to say for this to be the runtime it
+    #: claims to be. `None` for one that is not a Python interpreter, which is
+    #: kohebi until it can import `sys`.
+    implementation: str | None = None
 
     def available(self) -> bool:
         return which(self.argv[0]) is not None
@@ -77,6 +82,36 @@ class Runtime:
         binary that was actually timed cannot be two different things.
         """
         return (which(self.argv[0]) or self.argv[0], *self.argv[1:])
+
+    def misidentified(self) -> str | None:
+        """A complaint when the binary found is not the runtime it is named as.
+
+        Two reports have now been generated from the wrong interpreter. The
+        first found uv's CPython under `python3` instead of the machine's. The
+        second found PyPy under `python3`, because PyPy ships a `python3` beside
+        its `pypy3` and putting that directory on PATH is the obvious way to
+        make `pypy3` findable at all. Each produced a full report in which every
+        other number was correct, and the second one had CPython and PyPy within
+        a millisecond of each other on every benchmark, which is the only reason
+        anybody noticed.
+
+        A name on PATH cannot be trusted to say what a binary is. Asking the
+        interpreter costs one process and cannot be fooled.
+        """
+        if self.implementation is None or not self.available():
+            return None
+        argv = [*self.resolved(), "-c", "import sys; print(sys.implementation.name)"]
+        try:
+            proc = subprocess.run(argv, capture_output=True, text=True, timeout=60, check=False)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            return f"could not ask {argv[0]} what it is: {error}"
+        found = proc.stdout.strip()
+        if found == self.implementation:
+            return None
+        return (
+            f"{self.name} resolved to {argv[0]}, which reports itself as "
+            f"{found or 'not a Python interpreter at all'} rather than {self.implementation}"
+        )
 
     def version(self) -> str:
         if not self.available():
@@ -102,11 +137,20 @@ class Runtime:
 
 # The baseline is always CPython as shipped: current stable, default build,
 # release, no flags chosen to flatter us.
-CPYTHON = Runtime("cpython", ("python3",), "baseline: current stable, default build")
-CPYTHON_JIT = Runtime("cpython-jit", ("python3",), "PYTHON_JIT=1, their fastest config")
-CPYTHON_FT = Runtime("cpython-ft", ("python3t",), "free-threaded build")
-PYPY = Runtime("pypy", ("pypy3",), "the incumbent fast Python")
-GRAALPY = Runtime("graalpy", ("graalpy",), "the other incumbent, and the compatibility standard")
+CPYTHON = Runtime(
+    "cpython", ("python3",), "baseline: current stable, default build", implementation="cpython"
+)
+CPYTHON_JIT = Runtime(
+    "cpython-jit", ("python3",), "PYTHON_JIT=1, their fastest config", implementation="cpython"
+)
+CPYTHON_FT = Runtime("cpython-ft", ("python3t",), "free-threaded build", implementation="cpython")
+PYPY = Runtime("pypy", ("pypy3",), "the incumbent fast Python", implementation="pypy")
+GRAALPY = Runtime(
+    "graalpy",
+    ("graalpy",),
+    "the other incumbent, and the compatibility standard",
+    implementation="graalpy",
+)
 KOHEBI_RUN = Runtime("kohebi-run", ("kohebi", "run"), "JIT mode")
 KOHEBI_BUILD = Runtime("kohebi-build", ("kohebi", "build", "--run"), "AOT mode")
 
@@ -129,6 +173,22 @@ def at(runtime: Runtime, binary: str) -> Runtime:
     that quietly measured last week's build.
     """
     if runtime.name not in OURS:
+        return runtime
+    return replace(runtime, argv=(binary, *runtime.argv[1:]))
+
+
+def located(runtime: Runtime, where: Mapping[str, str]) -> Runtime:
+    """The same runtime run from a binary the caller named.
+
+    PATH cannot reach a particular interpreter when several are installed, and
+    the honest answer is to say which one you meant. CI installs CPython, PyPy
+    and GraalPy into one job, and the last one set up owns `python3`, so the
+    baseline column of every CI report so far was measuring GraalPy under
+    CPython's name. `--at cpython=python3.14` is how a caller says which one it
+    meant rather than hoping.
+    """
+    binary = where.get(runtime.name)
+    if binary is None:
         return runtime
     return replace(runtime, argv=(binary, *runtime.argv[1:]))
 
@@ -165,6 +225,50 @@ def _rss_to_bytes(ru_maxrss: int) -> int:
     return ru_maxrss if sys.platform == "darwin" else ru_maxrss * 1024
 
 
+#: Whether this platform has the `/proc` entry that [`_watch_peak_rss`] reads.
+_HAS_PROC_STATUS = sys.platform.startswith("linux")
+
+
+def _watch_peak_rss(pid: int, seen: list[int], interval_s: float = 0.001) -> None:
+    """The kernel's own high-water mark for one process, until it exits.
+
+    On Linux `ru_maxrss` from `wait4` cannot be used for this at all, which took
+    a while to believe. A child inherits the parent's page tables across `fork`,
+    those pages are charged to the child, and the peak is recorded before `exec`
+    replaces them. So the number that comes back is the size of whatever spawned
+    the process, not the size of the process. Measured with a parent holding 200
+    MiB of ballast, `/bin/true` reports a peak of 213 MiB. `posix_spawn` does not
+    help: glibc implements it with `CLONE_VM`, so the child shares the parent's
+    address space until `exec` and is charged for it just the same.
+
+    This is why `/usr/bin/time` appears to work. It is a tiny program, so the
+    floor it imposes is small enough not to notice, and a harness written in
+    Python imposes a floor of twenty-odd megabytes onto a runtime whose whole
+    claim is using three.
+
+    `VmHWM` in `/proc/<pid>/status` is the same quantity measured correctly: the
+    kernel resets it at `exec`, so it covers the program that was asked for and
+    nothing before it. It is itself a high-water mark, so this does not have to
+    catch the peak as it happens, only to read once after it. The poll is on its
+    own thread and the timing still comes from a blocking wait, so nothing here
+    is folded into the elapsed time.
+
+    A process that exits before the first read leaves nothing behind, and that
+    is reported as unknown rather than as a plausible-looking zero.
+    """
+    path = f"/proc/{pid}/status"
+    while True:
+        try:
+            with open(path, encoding="ascii") as handle:
+                text = handle.read()
+        except OSError:
+            return
+        marker = "VmHWM:"
+        if marker in text:
+            seen.append(int(text.split(marker, 1)[1].split(maxsplit=1)[0]))
+        time.sleep(interval_s)
+
+
 @dataclass(frozen=True, slots=True)
 class _Run:
     elapsed_s: float
@@ -176,18 +280,24 @@ class _Run:
 def _run_once(argv: list[str], env: dict[str, str], timeout_s: float) -> _Run:
     """Run one child and get that child's own peak RSS.
 
-    `getrusage(RUSAGE_CHILDREN)` is tempting and wrong: it is a monotonic
-    high-water mark across every child the process has ever reaped, so the
-    memory number for PyPy would silently inherit CPython's peak from the
+    Where the peak comes from depends on the platform, and the reason is in
+    [`_watch_peak_rss`]. On Linux it is `VmHWM`, because `ru_maxrss` there is the
+    size of whatever did the spawning. On macOS it is `ru_maxrss`, which is
+    correct because `posix_spawn` is a real system call rather than a fork.
+
+    `getrusage(RUSAGE_CHILDREN)` is tempting and wrong on every platform: it is a
+    monotonic high-water mark across every child the process has ever reaped, so
+    the memory number for PyPy would silently inherit CPython's peak from the
     previous benchmark. `os.wait4` gives the rusage of one specific child.
 
-    Windows has no `wait4`, so memory is reported as unknown there rather than
-    as a plausible-looking wrong number.
+    Windows has no `wait4` and no `/proc`, so memory is reported as unknown there
+    rather than as a plausible-looking wrong number.
 
     The wait is blocking rather than a poll loop. Polling would fold the poll
     interval into every measurement, which is invisible on a one-second
     benchmark and ruinous on startup, where the whole quantity being measured
-    is a handful of milliseconds.
+    is a handful of milliseconds. The memory poll is on its own thread for the
+    same reason.
     """
     with (
         tempfile.TemporaryFile() as out,
@@ -195,6 +305,12 @@ def _run_once(argv: list[str], env: dict[str, str], timeout_s: float) -> _Run:
     ):
         started = time.perf_counter()
         proc = subprocess.Popen(argv, stdout=out, stderr=err, env=env)
+
+        seen: list[int] = []
+        watcher: threading.Thread | None = None
+        if _HAS_PROC_STATUS:
+            watcher = threading.Thread(target=_watch_peak_rss, args=(proc.pid, seen), daemon=True)
+            watcher.start()
 
         # Enforce the timeout out of band so the happy path stays a blocking wait.
         timed_out = False
@@ -217,6 +333,10 @@ def _run_once(argv: list[str], env: dict[str, str], timeout_s: float) -> _Run:
                 elapsed = time.perf_counter() - started
                 returncode = proc.returncode or 0
                 peak = 0
+            if _HAS_PROC_STATUS:
+                if watcher is not None:
+                    watcher.join(1.0)
+                peak = max(seen) * 1024 if seen else 0
         finally:
             killer.cancel()
 

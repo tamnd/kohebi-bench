@@ -100,9 +100,16 @@ jobs:
         with:
           python-version: "graalpy-25.2"
       - run: python3.14 -m pip install -e .
+      # Every runtime is named explicitly. Three setup-python steps in one job
+      # means three interpreters claiming `python3`, and the last one wins, so
+      # left to PATH the baseline column here was measuring GraalPy. The harness
+      # now refuses to run rather than publish that, which is how it was found.
       - name: Measure
         run: |
           python3.14 -m kohebi_bench run benchmarks \
+            --at cpython=python3.14 \
+            --at pypy=pypy3.11 \
+            --at graalpy=graalpy \
             --runs "${{ inputs.runs || 10 }}" \
             --allow-noisy \
             --out results/ci
