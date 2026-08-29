@@ -436,6 +436,46 @@ class TestIdentity:
         assert "not a Python interpreter at all" in complaint
 
 
+class TestBuildQuality:
+    """The right interpreter, built in a way that makes it a dishonest baseline."""
+
+    def _cpython(self) -> runtimes.Runtime:
+        return replace(runtimes.CPYTHON, argv=(sys.executable,), implementation="cpython")
+
+    def test_a_runtime_that_is_not_cpython_is_not_asked(self) -> None:
+        # Only CPython is the baseline, and only CPython has these build
+        # variables to look at. PyPy and GraalPy answer `None` to both and would
+        # look fine, but asking them means one process per run for nothing.
+        assert runtimes.PYPY.crippled() is None
+        assert runtimes.KOHEBI_RUN.crippled() is None
+
+    def test_the_interpreter_running_these_tests_is_judged_on_its_own_build(self) -> None:
+        import sysconfig
+
+        if sys.implementation.name != "cpython":
+            pytest.skip("only CPython has these build variables")
+        complaint = self._cpython().crippled()
+        dtrace = bool(sysconfig.get_config_var("WITH_DTRACE"))
+        debug = bool(sysconfig.get_config_var("Py_DEBUG"))
+        # Whichever CPython is running this, the answer has to follow from how
+        # it was built rather than from what would be convenient here. CI runs a
+        # standalone build with neither of these, and a developer on macOS with
+        # Homebrew's Python has the one this check was written for.
+        if debug or (dtrace and sys.platform == "darwin"):
+            assert complaint is not None
+            assert sys.executable in complaint
+        else:
+            assert complaint is None
+
+    def test_a_binary_that_will_not_answer_is_not_a_complaint(self, tmp_path: Path) -> None:
+        # It has already been caught by `misidentified`, and refusing twice for
+        # one problem buries the message that says what the problem is.
+        binary = tmp_path / "python3"
+        binary.write_text("#!/bin/sh\nexit 0\n")
+        binary.chmod(0o755)
+        assert replace(runtimes.CPYTHON, argv=(str(binary),)).crippled() is None
+
+
 class TestNamingABinary:
     """`--at NAME=PATH`, for a machine where PATH cannot reach what you meant."""
 
