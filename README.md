@@ -77,9 +77,11 @@ Two things are deliberately absent so far. There is no large application benchma
 
 ## How a measurement is taken
 
-Each benchmark runs in a fresh child process. Warmup runs are discarded, then `--runs` timed runs are recorded, and peak RSS comes from `os.wait4` on that specific child.
+Each benchmark runs in a fresh child process. Warmup runs are discarded, then `--runs` timed runs are recorded, and peak RSS comes from `VmHWM` in `/proc` on Linux and from `os.wait4` on that specific child on macOS.
 
-That last detail is the one worth stating, because the obvious approach is wrong. `getrusage(RUSAGE_CHILDREN)` returns a monotonic high-water mark across every child the process has ever reaped, so the memory figure for PyPy would quietly inherit CPython's peak from the benchmark before it. The unit differs by platform too: kilobytes on Linux, bytes on macOS. Both traps are handled in `src/kohebi_bench/runtimes.py` and both are covered by a test.
+Every part of that sentence is there because the obvious version of it is wrong. `getrusage(RUSAGE_CHILDREN)` returns a monotonic high-water mark across every child the process has ever reaped, so the memory figure for PyPy would quietly inherit CPython's peak from the benchmark before it. `ru_maxrss` from `wait4` fixes that and is still unusable on Linux, because a child inherits the parent's page tables across `fork` and is charged for them before `exec` replaces them, so what comes back is the size of whatever did the spawning rather than the size of the program: with a parent holding 200 MiB of ballast, `/bin/true` reports a peak of 213 MiB. `posix_spawn` does not help, since glibc implements it with `CLONE_VM`. That is why `/usr/bin/time` appears to work, and it is only because that program is tiny. `VmHWM` is the same quantity measured correctly, because the kernel resets it at `exec`. The unit differs by platform on top of all this: kilobytes on Linux, bytes on macOS. Every one of these traps is handled in `src/kohebi_bench/runtimes.py` and covered by a test.
+
+Before anything is timed, each runtime is asked for `sys.implementation.name` and has to give the answer its name promises. A binary found on PATH is not evidence of what it is: PyPy ships a `python3` next to its `pypy3`, so the natural way to make `pypy3` findable also replaces the baseline with PyPy, and the report that comes out has CPython and PyPy within a millisecond of each other on every line.
 
 Every benchmark computes a checksum and prints it. Without that, a sufficiently good compiler deletes the loop and the runtime that optimises hardest posts the fastest time by doing nothing.
 
