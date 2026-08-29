@@ -6,7 +6,7 @@ Benchmarks for [kohebi](https://github.com/tamnd/kohebi), a Python runtime writt
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
 > [!NOTE]
-> kohebi cannot run a Python program yet, so `kohebi-bench run` still measures CPython, PyPy, and GraalPy alone. What it can do is lex, so `kohebi-bench lex` measures that against CPython's `tokenize` module and is the first real kohebi number in here. The harness was built before the runtime on purpose, because a benchmark suite written afterwards tends to be one the runtime happens to win.
+> kohebi runs its first Python programs as of the tier zero interpreter, so `kohebi-bench run benchmarks/tier0` is the first end to end comparison in here. Everything in `micro/` and `apps/` still needs functions, `for` loops, attributes or subscripting, none of which the runtime has yet, so those directories measure CPython, PyPy, and GraalPy alone for now. The harness was built before the runtime on purpose, because a benchmark suite written afterwards tends to be one the runtime happens to win.
 
 ## The rule
 
@@ -29,8 +29,11 @@ $ pip install -e '.[dev]'
 $ kohebi-bench run                                    # every installed runtime, 30 runs
 $ kohebi-bench run --runtime cpython --runtime pypy   # just these two
 $ kohebi-bench run benchmarks/micro --runs 50 --out results/local
+$ kohebi-bench run benchmarks/tier0 --kohebi ../kohebi/target/release/kohebi
 $ kohebi-bench lex --kohebi ../kohebi/target/release/kohebi
 ```
+
+`--kohebi` points the `kohebi-run` and `kohebi-build` rows at a particular binary. Nobody installs kohebi before benchmarking a change to it, and without the flag the report quietly measures whichever build happens to be on PATH.
 
 Runtimes that are not installed are skipped with a note rather than silently omitted. A benchmark that fails or times out is recorded as a failure and appears in the report, because a runtime that cannot run a benchmark has not won it.
 
@@ -52,12 +55,21 @@ Agreement itself is decided in [tamnd/kohebi-compat](https://github.com/tamnd/ko
 
 | Directory | Contents |
 | --- | --- |
+| `benchmarks/tier0/` | Integer and float loops, branch dispatch, string operators, list growth |
 | `benchmarks/micro/` | Attribute dispatch, integer arithmetic, method calls, homogeneous lists, string building |
 | `benchmarks/apps/` | JSON round-tripping, interpreter startup |
 
 The micro benchmarks are chosen to isolate the specific bets in kohebi's design: shape-based attribute lookup, unboxed integers, inline caches on call sites, and PyPy-style list storage strategies. If those bets are wrong, these are the programs that say so first.
 
 `benchmarks/apps/startup.py` is there because startup time is a real cost that steady-state benchmarks hide entirely, and because it is the number an AOT-compiled binary should win by the largest margin.
+
+## The tier zero suite, which is the part kohebi can run today
+
+`benchmarks/tier0/` exists because a comparison you cannot run is not a comparison. The tier zero interpreter has assignment, arithmetic, comparison, the boolean operators, `if`, `while`, `break`, `continue`, container displays, `in`, and `print`. It does not have functions, `for` loops, attributes, subscripting, iteration or imports yet, so the five programs in there are written entirely with what exists.
+
+That makes them a little strange to read. Collatz is inlined rather than called, buckets are five separate names rather than a list, and a list is grown with `items += [i]` because there are no method calls. Every one of them was diffed against CPython 3.14 and PyPy before it went in, so all three runtimes print the same bytes, and none of them is doing less work than the others.
+
+These are temporary. When kohebi can run `micro/int_arithmetic.py` as a person would write it, `tier0/int_loop.py` has done its job and comes out. What it buys in the meantime is a real number every week instead of a promise, and the first one already said something useful, which is in `results/`.
 
 Two things are deliberately absent so far. There is no large application benchmark, and there is nothing multi-threaded. Both matter more than anything in `micro/`, and both need the runtime to exist before the benchmark can be shaped honestly.
 
@@ -107,6 +119,7 @@ Every report names the machine it came from and says what is wrong with it. The 
 | --- | --- | --- |
 | `gpc` | i9-13900K, 32 threads, 31 GiB, Ubuntu under WSL2 | The reference machine, and the only one with all four runtimes installed |
 | `server1`, `server2`, `server3` | Shared KVM guests, 4 to 8 vCPUs of EPYC | Regressions and smoke runs, not headline numbers |
+| `mba-m4` | Apple M4 MacBook Air, fanless, 10 cores | The development laptop. It throttles under a long run and the report says so |
 
 `gpc` is a desktop running WSL2, which is honest about what it is: good enough that the intervals in `results/gpc/` are tight, not good enough to defend a few percent. The published 10x claim, when there is something to claim, needs a machine with nothing else on it, the governor pinned to performance, and turbo off.
 

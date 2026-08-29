@@ -14,7 +14,7 @@ import sys
 import tempfile
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .stats import Distribution
@@ -67,6 +67,22 @@ ALL: dict[str, Runtime] = {
 }
 
 DEFAULT_COMPARISON = (CPYTHON, PYPY, GRAALPY, KOHEBI_RUN, KOHEBI_BUILD)
+
+#: The runtimes that are us, and so the ones the goal is measured against.
+OURS = frozenset({KOHEBI_RUN.name, KOHEBI_BUILD.name})
+
+
+def at(runtime: Runtime, binary: str) -> Runtime:
+    """The same runtime run from a particular binary rather than from PATH.
+
+    Nobody installs kohebi before benchmarking a change to it. The binary being
+    measured is almost always `target/release/kohebi` in a working tree, and
+    asking people to put that on PATH first is how you end up with a report
+    that quietly measured last week's build.
+    """
+    if runtime.name not in OURS:
+        return runtime
+    return replace(runtime, argv=(binary, *runtime.argv[1:]))
 
 
 @dataclass(frozen=True, slots=True)

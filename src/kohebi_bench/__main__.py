@@ -16,7 +16,7 @@ from pathlib import Path
 
 from . import lex as lexmod
 from .report import Report, describe_environment
-from .runtimes import ALL, DEFAULT_COMPARISON, Measurement, collect, measure
+from .runtimes import ALL, DEFAULT_COMPARISON, Measurement, at, collect, measure
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -37,6 +37,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Runtime to measure. Repeatable. Defaults to every known runtime.",
     )
     run.add_argument("--baseline", default="cpython", choices=sorted(ALL))
+    run.add_argument(
+        "--kohebi",
+        default="kohebi",
+        metavar="PATH",
+        help=(
+            "The kohebi binary to measure (default: whichever is on PATH). "
+            "Usually target/release/kohebi in a checkout of tamnd/kohebi."
+        ),
+    )
     _add_common(run, runs=30, timeout=600.0)
 
     lex = commands.add_parser(
@@ -101,7 +110,8 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         parser.error(f"{args.suite} is not a directory")
 
     chosen = [ALL[n] for n in args.runtime] if args.runtime else list(DEFAULT_COMPARISON)
-    baseline = ALL[args.baseline]
+    chosen = [at(r, args.kohebi) for r in chosen]
+    baseline = at(ALL[args.baseline], args.kohebi)
     if baseline not in chosen:
         chosen.insert(0, baseline)
 
@@ -143,10 +153,24 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
             measurements.append(m)
             _report_one(m)
 
+    notes = [
+        f"Suite: `{args.suite}`, {len(benchmarks)} benchmark(s), "
+        f"{args.runs} timed runs each after {args.warmup} warmup run(s).",
+    ]
+    if missing:
+        notes.append(
+            f"Not installed on this machine, so absent from every table: {', '.join(missing)}."
+        )
+    notes.append(
+        "Each benchmark is a whole process, startup included, because that is what a "
+        "user experiences."
+    )
+
     report = Report(
         baseline=baseline.name,
         measurements=measurements,
         environment=describe_environment(available),
+        notes=notes,
     )
     return _finish(report, measurements, args)
 

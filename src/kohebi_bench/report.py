@@ -15,6 +15,7 @@ enforced by review.
 from __future__ import annotations
 
 import json
+import math
 import os
 import platform
 import subprocess
@@ -22,8 +23,44 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .runtimes import Measurement, Runtime
+from .runtimes import OURS, Measurement, Runtime
 from .stats import Comparison, compare, geomean
+
+#: kohebi's claim, and the only pair of numbers that settles it. Ten times the
+#: speed of CPython on a tenth of the memory, both halves on the same run.
+GOAL_SPEEDUP = 10.0
+GOAL_MEMORY = 0.1
+
+
+@dataclass(frozen=True, slots=True)
+class Standing:
+    """Where one runtime stands against the baseline, on both axes at once.
+
+    Speed and memory are one number here rather than two sections apart,
+    because the trade-off between them is the thing being claimed and it is
+    invisible when the two are reported separately.
+    """
+
+    runtime: str
+    #: Geomean of baseline median over this runtime's median. Above 1.0 is faster.
+    speed: float
+    #: Geomean of this runtime's peak RSS over the baseline's. Below 1.0 is leaner.
+    memory: float
+
+    @property
+    def met(self) -> bool:
+        return self.speed >= GOAL_SPEEDUP and self.memory <= GOAL_MEMORY
+
+    def remaining(self) -> str:
+        """What is still missing, in the units the goal is stated in."""
+        if self.met:
+            return "met"
+        parts = []
+        if self.speed < GOAL_SPEEDUP:
+            parts.append(f"{GOAL_SPEEDUP / self.speed:.1f}x faster" if self.speed else "faster")
+        if self.memory > GOAL_MEMORY:
+            parts.append(f"{self.memory / GOAL_MEMORY:.1f}x leaner")
+        return ", ".join(parts)
 
 
 @dataclass(slots=True)
@@ -70,6 +107,40 @@ class Report:
                 per_runtime.setdefault(runtime, []).append(c.speedup)
         return {r: geomean(v) for r, v in sorted(per_runtime.items())}
 
+    def memory_ratios(self) -> dict[str, float]:
+        """Peak RSS against the baseline's, per runtime, as a geomean.
+
+        A benchmark where either side reported no memory at all is skipped
+        rather than counted as zero. Windows has no `wait4`, so that is the
+        whole table there, and a geomean of zeroes would read as a perfect
+        score.
+        """
+        per_runtime: dict[str, list[float]] = {}
+        for runs in self.by_benchmark().values():
+            base = runs.get(self.baseline)
+            if base is None or base.failed or not base.peak_rss_bytes:
+                continue
+            for runtime, m in runs.items():
+                if runtime == self.baseline or m.failed or not m.peak_rss_bytes:
+                    continue
+                per_runtime.setdefault(runtime, []).append(m.peak_rss_bytes / base.peak_rss_bytes)
+        return {r: geomean(v) for r, v in sorted(per_runtime.items())}
+
+    def standings(self) -> list[Standing]:
+        """Every runtime on both axes, ours first.
+
+        Rivals are in here too. PyPy's speed is the bar kohebi has to clear and
+        PyPy's memory is the reason there is a second axis at all, so leaving
+        it out would make the goal look easier than it is.
+        """
+        speeds = self.geomeans()
+        memory = self.memory_ratios()
+        rows = [
+            Standing(r, speeds[r], memory.get(r, float("nan")))
+            for r in sorted(speeds, key=lambda r: (r not in OURS, r))
+        ]
+        return rows
+
     def to_json(self) -> str:
         return (
             json.dumps(
@@ -79,6 +150,8 @@ class Report:
                     "environment": self.environment,
                     "notes": self.notes,
                     "geomean_speedup": self.geomeans(),
+                    "geomean_memory_ratio": self.memory_ratios(),
+                    "goal": {"speedup": GOAL_SPEEDUP, "memory_ratio": GOAL_MEMORY},
                     "measurements": [m.summary() for m in self.measurements],
                 },
                 indent=2,
@@ -125,14 +198,30 @@ class Report:
                 "or an interquartile range above 5% of the median. Re-run on a quiet machine.",
             ]
 
-        geo = self.geomeans()
-        if geo:
-            lines += ["", "## Geomean speedup", "", "| Runtime | Speedup |", "| --- | ---: |"]
-            lines += [f"| {r} | {v:.2f}x |" for r, v in geo.items()]
+        standings = self.standings()
+        if standings:
             lines += [
                 "",
-                "A geomean alone is not a result. The per-benchmark table below is the "
-                "number; the geomean is a summary of it.",
+                "## Where this leaves the goal",
+                "",
+                f"kohebi is aiming at {GOAL_SPEEDUP:.0f}x the speed of `{self.baseline}` on "
+                f"{GOAL_MEMORY:.1f}x its peak memory, both halves on the same run. The rivals "
+                "are in this table too, because their speed is the bar and their memory is "
+                "the reason there are two columns.",
+                "",
+                "| Runtime | Speed | Peak memory | Still needed |",
+                "| --- | ---: | ---: | --- |",
+            ]
+            for s in standings:
+                mem = "n/a" if math.isnan(s.memory) else f"{s.memory:.2f}x"
+                needed = s.remaining() if s.runtime in OURS else ""
+                lines.append(f"| {s.runtime} | {s.speed:.2f}x | {mem} | {needed} |")
+            lines += [
+                "",
+                "Speed above 1.00x is faster than the baseline. Peak memory below 1.00x is "
+                "leaner than it. Both are geometric means, and a geomean alone is not a "
+                "result: the per-benchmark tables below are the number, and this is a "
+                "summary of them.",
             ]
 
         speedups = self.speedups()

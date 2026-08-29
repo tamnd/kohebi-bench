@@ -8,7 +8,16 @@ from pathlib import Path
 import pytest
 
 from kohebi_bench.report import Report, cpu_model, describe_environment, publishable
-from kohebi_bench.runtimes import CPYTHON, Measurement, Runtime, collect, measure
+from kohebi_bench.runtimes import (
+    CPYTHON,
+    KOHEBI_BUILD,
+    KOHEBI_RUN,
+    Measurement,
+    Runtime,
+    at,
+    collect,
+    measure,
+)
 from kohebi_bench.stats import Distribution
 
 HERE = Path(__file__).resolve().parent
@@ -137,6 +146,103 @@ class TestReport:
         assert data["baseline"] == "cpython"
         assert data["environment"]["platform"]
         assert data["generated_at"]
+
+
+class TestBinaryOverride:
+    """Nobody installs kohebi before benchmarking a change to it."""
+
+    def test_the_kohebi_binary_can_come_from_a_working_tree(self):
+        moved = at(KOHEBI_RUN, "target/release/kohebi")
+        assert moved.argv == ("target/release/kohebi", "run")
+        assert moved.name == KOHEBI_RUN.name
+
+    def test_the_flags_after_the_binary_are_kept(self):
+        assert at(KOHEBI_BUILD, "/opt/kohebi").argv == ("/opt/kohebi", "build", "--run")
+
+    def test_someone_elses_runtime_is_left_alone(self):
+        """`--kohebi` must not repoint python3 at the kohebi binary."""
+        assert at(CPYTHON, "/opt/kohebi") == CPYTHON
+
+
+class TestGoal:
+    """Speed and memory as one row, because the claim is both at once."""
+
+    def _pair(self, runtime: str, name: str, seconds: float, mib: float) -> Measurement:
+        samples = tuple(seconds + i * 0.0001 for i in range(20))
+        return Measurement(runtime, name, Distribution(samples), int(mib * 1024 * 1024))
+
+    def _report(self, speed: float, mib: float) -> Report:
+        return Report(
+            baseline="cpython",
+            measurements=[
+                self._pair("cpython", "a", 1.0, 100),
+                self._pair("kohebi-run", "a", 1.0 / speed, mib),
+            ],
+        )
+
+    def test_memory_is_a_ratio_of_the_baseline(self):
+        ratios = self._report(1.0, 25).memory_ratios()
+        assert ratios["kohebi-run"] == pytest.approx(0.25, rel=0.01)
+
+    def test_a_run_that_hit_the_goal_says_so(self):
+        [standing] = self._report(12.0, 8).standings()
+        assert standing.met
+        assert standing.remaining() == "met"
+
+    def test_a_run_that_missed_says_by_how_much_on_each_axis(self):
+        [standing] = self._report(2.0, 50).standings()
+        assert not standing.met
+        assert "5.0x faster" in standing.remaining()
+        assert "5.0x leaner" in standing.remaining()
+
+    def test_winning_one_axis_only_reports_the_other(self):
+        [standing] = self._report(20.0, 50).standings()
+        assert standing.remaining() == "5.0x leaner"
+
+    def test_a_machine_with_no_memory_numbers_does_not_score_perfectly(self):
+        """Windows has no wait4, so every peak is zero there."""
+        report = Report(
+            baseline="cpython",
+            measurements=[
+                Measurement("cpython", "a", Distribution((1.0,) * 20), 0),
+                Measurement("kohebi-run", "a", Distribution((0.05,) * 20), 0),
+            ],
+        )
+        assert report.memory_ratios() == {}
+        [standing] = report.standings()
+        assert not standing.met
+        assert "n/a" in report.to_markdown()
+
+    def test_the_markdown_puts_the_goal_where_it_cannot_be_missed(self):
+        markdown = self._report(2.0, 50).to_markdown()
+        assert "Where this leaves the goal" in markdown
+        assert "5.0x faster" in markdown
+
+    def test_a_rival_is_measured_but_not_held_to_our_goal(self):
+        report = Report(
+            baseline="cpython",
+            measurements=[
+                self._pair("cpython", "a", 1.0, 100),
+                self._pair("pypy", "a", 0.1, 300),
+            ],
+        )
+        [standing] = report.standings()
+        assert standing.runtime == "pypy"
+        assert standing.memory == pytest.approx(3.0, rel=0.01)
+        # PyPy's row carries no "still needed", since the goal is not theirs.
+        row = next(ln for ln in report.to_markdown().splitlines() if ln.startswith("| pypy "))
+        assert row.endswith("|  |")
+
+    def test_ours_are_listed_first(self):
+        report = Report(
+            baseline="cpython",
+            measurements=[
+                self._pair("cpython", "a", 1.0, 100),
+                self._pair("pypy", "a", 0.1, 300),
+                self._pair("kohebi-run", "a", 0.5, 50),
+            ],
+        )
+        assert [s.runtime for s in report.standings()] == ["kohebi-run", "pypy"]
 
 
 class TestCollect:
