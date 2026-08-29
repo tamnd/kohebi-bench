@@ -58,9 +58,14 @@ status=0
 # symlinked, and a non-interactive ssh command does not read the profile that
 # would normally add it. Without this the run silently measures CPython alone
 # and reports nothing missing, since a runtime that is not installed is skipped.
+#
+# `--out` goes last rather than first. It belongs to the subcommand, so putting
+# it in front of `run` makes argparse read `run` as its value and refuse the
+# line, which is what this script did until it was pointed at a suite for the
+# first time and every argument after the command started mattering.
 ssh "$host" "cd '$remote_dir' && PATH=\$HOME/.local/bin:\$PATH \
     KOHEBI_BENCH_HOST='$host' PYTHONPATH=src '$remote_python' \
-    -m kohebi_bench --out '$remote_dir/out' $*" || status=$?
+    -m kohebi_bench $* --out '$remote_dir/out'" || status=$?
 
 echo "==> fetching results into $local_out"
 mkdir -p "$local_out"
