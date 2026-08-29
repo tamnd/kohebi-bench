@@ -58,7 +58,7 @@ Agreement itself is decided in [tamnd/kohebi-compat](https://github.com/tamnd/ko
 
 | Directory | Contents |
 | --- | --- |
-| `benchmarks/tier0/` | Integer and float loops, branch dispatch, string operators, list growth, indexing, iteration, calls |
+| `benchmarks/tier0/` | Integer and float loops, branch dispatch, string operators, list growth, indexing, iteration, calls, comprehensions, exception handling |
 | `benchmarks/micro/` | Attribute dispatch, integer arithmetic, method calls, homogeneous lists, string building |
 | `benchmarks/apps/` | JSON round-tripping, interpreter startup |
 
@@ -68,7 +68,7 @@ The micro benchmarks are chosen to isolate the specific bets in kohebi's design:
 
 ## The tier zero suite, which is the part kohebi can run today
 
-`benchmarks/tier0/` exists because a comparison you cannot run is not a comparison. The tier zero interpreter has assignment, arithmetic, comparison, the boolean operators, `if`, `while`, `break`, `continue`, container displays, `in`, `print`, subscripting, slicing, `for` loops over every builtin container, and functions. It does not have attributes, classes, exceptions or imports yet, so the programs in there are written entirely with what exists.
+`benchmarks/tier0/` exists because a comparison you cannot run is not a comparison. The tier zero interpreter has assignment, arithmetic, comparison, the boolean operators, `if`, `while`, `break`, `continue`, container displays, `in`, `print`, subscripting, slicing, `for` loops over every builtin container, and functions. It also has closures, comprehensions, `raise` and `try`. It does not have attributes, classes or imports yet, so the programs in there are written entirely with what exists.
 
 That makes some of them a little strange to read. Buckets are five separate names rather than a list, and a list is grown with `items += [i]` because there are no method calls. The older ones inline what would be a call, which was the only option when they were written and is now a useful contrast against `call.py`. Every one of them was diffed against CPython 3.14 and PyPy before it went in, so all three runtimes print the same bytes, and none of them is doing less work than the others.
 
