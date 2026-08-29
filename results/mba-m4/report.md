@@ -1,6 +1,6 @@
 # Benchmark report
 
-Generated 2026-08-29T09:40:28+00:00.
+Generated 2026-08-29T10:00:32+00:00.
 Baseline: `cpython`.
 
 ## What was measured
@@ -25,7 +25,7 @@ Baseline: `cpython`.
 | virtualised | unknown |
 
 > [!WARNING]
-> 36 measurement(s) were too noisy to publish: fewer than 5 samples, or an interquartile range above 5% of the median. Re-run on a quiet machine.
+> 35 measurement(s) were too noisy to publish: fewer than 5 samples, or an interquartile range above 5% of the median. Re-run on a quiet machine.
 
 ## Where this leaves the goal
 
@@ -33,8 +33,8 @@ kohebi is aiming at 10x the speed of `cpython` on 0.1x its peak memory, both hal
 
 | Runtime | Speed | Peak memory | Still needed |
 | --- | ---: | ---: | --- |
-| kohebi-run | 1.37x | 0.37x | 7.3x faster, 3.7x leaner |
-| pypy | 4.44x | 2.03x |  |
+| kohebi-run | 0.99x | 0.36x | 10.1x faster, 3.6x leaner |
+| pypy | 2.96x | 1.89x |  |
 
 Speed above 1.00x is faster than the baseline. Peak memory below 1.00x is leaner than it. Both are geometric means, and a geomean alone is not a result: the per-benchmark tables below are the number, and this is a summary of them.
 
@@ -42,20 +42,20 @@ Speed above 1.00x is faster than the baseline. Peak memory below 1.00x is leaner
 
 | Benchmark | kohebi-run | pypy |
 | --- | ---: | ---: |
-| `attribute_dispatch` | failed | 4.84x [4.35, 5.27] |
-| `branch_dispatch` | 1.03x [0.97, 1.10] (not significant) | 8.24x [7.61, 8.92] |
-| `float_loop` | 0.81x [0.73, 0.88] | 6.27x [5.82, 6.93] |
-| `int_arithmetic` | failed | 12.36x [9.88, 14.40] |
-| `int_loop` | 1.07x [0.96, 1.21] (not significant) | 10.64x [10.10, 11.49] |
-| `iterate` | 1.18x [1.06, 1.37] | 9.89x [8.94, 11.45] |
-| `json_roundtrip` | failed | 1.61x [1.27, 4.97] |
-| `list_grow` | 1.47x [1.22, 1.75] | 4.36x [3.89, 5.46] |
-| `list_index` | 1.03x [0.99, 1.17] (not significant) | 8.15x [7.53, 8.87] |
-| `list_of_scalars` | failed | 2.96x [2.25, 3.26] |
-| `method_call` | failed | 2.81x [2.04, 3.52] |
-| `startup` | 8.15x [7.09, 8.59] | 1.15x [1.00, 1.23] (not significant) |
-| `str_ops` | 0.95x [0.84, 1.03] (not significant) | 6.87x [6.02, 7.59] |
-| `string_building` | failed | 0.95x [0.83, 1.06] (not significant) |
+| `attribute_dispatch` | failed | 2.27x [1.37, 3.49] |
+| `branch_dispatch` | 0.86x [0.56, 1.13] (not significant) | 6.21x [4.59, 7.88] |
+| `float_loop` | 0.66x [0.57, 0.71] | 4.87x [4.39, 5.40] |
+| `int_arithmetic` | failed | 12.26x [10.75, 12.72] |
+| `int_loop` | 0.82x [0.74, 1.00] (not significant) | 8.06x [6.81, 10.36] |
+| `iterate` | 1.12x [0.99, 1.21] (not significant) | 6.51x [5.43, 7.15] |
+| `json_roundtrip` | failed | 0.81x [0.75, 0.85] |
+| `list_grow` | 1.07x [0.96, 1.26] (not significant) | 4.23x [3.59, 5.05] |
+| `list_index` | 0.81x [0.73, 0.93] | 4.67x [4.11, 5.61] |
+| `list_of_scalars` | failed | 1.45x [0.99, 1.63] (not significant) |
+| `method_call` | failed | 2.21x [1.94, 2.79] |
+| `startup` | 5.01x [4.69, 5.46] | 0.69x [0.66, 0.74] |
+| `str_ops` | 0.42x [0.31, 0.53] | 4.30x [3.31, 4.56] |
+| `string_building` | failed | 0.60x [0.48, 0.85] |
 
 ## Peak memory
 
@@ -63,20 +63,20 @@ Speed is never reported without it.
 
 | Benchmark | cpython | kohebi-run | pypy |
 | --- | ---: | ---: | ---: |
-| `attribute_dispatch` | 18.4 MiB | n/a | 38.0 MiB |
-| `branch_dispatch` | 14.6 MiB | 3.3 MiB | 33.5 MiB |
-| `float_loop` | 14.0 MiB | 3.7 MiB | 32.9 MiB |
-| `int_arithmetic` | 14.3 MiB | n/a | 36.9 MiB |
-| `int_loop` | 14.4 MiB | 3.7 MiB | 33.2 MiB |
-| `iterate` | 60.6 MiB | 49.7 MiB | 84.2 MiB |
-| `json_roundtrip` | 34.9 MiB | n/a | 77.3 MiB |
-| `list_grow` | 60.2 MiB | 39.0 MiB | 108.2 MiB |
-| `list_index` | 33.4 MiB | 22.0 MiB | 70.3 MiB |
-| `list_of_scalars` | 148.8 MiB | n/a | 158.8 MiB |
-| `method_call` | 23.0 MiB | n/a | 50.7 MiB |
-| `startup` | 14.3 MiB | 3.2 MiB | 31.0 MiB |
-| `str_ops` | 14.5 MiB | 3.8 MiB | 33.0 MiB |
-| `string_building` | 26.8 MiB | n/a | 58.2 MiB |
+| `attribute_dispatch` | 20.0 MiB | n/a | 38.6 MiB |
+| `branch_dispatch` | 14.4 MiB | 3.5 MiB | 33.6 MiB |
+| `float_loop` | 14.7 MiB | 3.4 MiB | 33.0 MiB |
+| `int_arithmetic` | 17.0 MiB | n/a | 36.8 MiB |
+| `int_loop` | 14.8 MiB | 3.5 MiB | 33.2 MiB |
+| `iterate` | 61.0 MiB | 50.2 MiB | 90.2 MiB |
+| `json_roundtrip` | 41.0 MiB | n/a | 53.8 MiB |
+| `list_grow` | 60.3 MiB | 38.5 MiB | 104.7 MiB |
+| `list_index` | 33.8 MiB | 21.4 MiB | 70.4 MiB |
+| `list_of_scalars` | 149.5 MiB | n/a | 165.3 MiB |
+| `method_call` | 26.0 MiB | n/a | 50.8 MiB |
+| `startup` | 13.6 MiB | 3.0 MiB | 29.9 MiB |
+| `str_ops` | 14.8 MiB | 4.0 MiB | 33.4 MiB |
+| `string_building` | 29.7 MiB | n/a | 58.3 MiB |
 
 ## Failures
 

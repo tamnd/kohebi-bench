@@ -153,6 +153,15 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         print("fix PATH, or pass the binary explicitly, and run again", file=sys.stderr)
         return 2
 
+    # The right interpreter, built in a way that makes it a dishonest baseline.
+    # Refused rather than warned about, because a warning on stderr scrolls past
+    # and the report it produced does not say anything is wrong with it.
+    slow = [complaint for r in available if (complaint := r.crippled())]
+    if slow:
+        for complaint in slow:
+            print(f"error: {complaint}", file=sys.stderr)
+        return 2
+
     benchmarks = collect(args.suite)
     if not benchmarks:
         print(f"no benchmarks under {args.suite}", file=sys.stderr)

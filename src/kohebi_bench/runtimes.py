@@ -113,6 +113,66 @@ class Runtime:
             f"{found or 'not a Python interpreter at all'} rather than {self.implementation}"
         )
 
+    def crippled(self) -> str | None:
+        """A complaint when the binary found is the right one but built to be slow.
+
+        `misidentified` catches the wrong interpreter. This catches the right
+        interpreter built in a way that makes it a dishonest baseline, which is
+        the same failure one step further in and is harder to see, because every
+        version string in the report is correct.
+
+        It was found by the two machines disagreeing. kohebi came out at 1.37x
+        CPython on a MacBook Air and 0.79x on an i9, on the same benchmarks, and
+        that gap is not a gap between two chips. Homebrew builds CPython with
+        `--with-dtrace`, macOS always has DTrace, so the probes are real code in
+        the eval loop rather than the nothing they compile to on a Linux box
+        without the systemtap headers. On the same Mac, the same 3.14.7, five
+        million times around a `while` loop: 0.80s from the Homebrew build and
+        0.24s from a build without the probes. Apple's own Python 3.9 beat the
+        Homebrew 3.14. Every number ever published against that baseline made
+        kohebi look about three times better than it is.
+
+        A debug build is checked at the same time for the same reason, and a
+        debug build is far more obviously wrong, which is presumably why nobody
+        has ever shipped a benchmark against one by accident.
+        """
+        if self.implementation != "cpython" or not self.available():
+            return None
+        source = (
+            "import sysconfig as s; "
+            "print(int(bool(s.get_config_var('WITH_DTRACE'))), "
+            "int(bool(s.get_config_var('Py_DEBUG'))))"
+        )
+        argv = [*self.resolved(), "-c", source]
+        try:
+            proc = subprocess.run(argv, capture_output=True, text=True, timeout=60, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            # Not a complaint. A runtime that will not answer this has already
+            # been caught by `misidentified`, or is old enough not to have the
+            # variables, and neither is a reason to refuse to measure.
+            return None
+        fields = proc.stdout.split()
+        if len(fields) != 2:
+            return None
+        dtrace, debug = (field == "1" for field in fields)
+        if debug:
+            return (
+                f"{self.name} resolved to {argv[0]}, which is a debug build. "
+                "Everything measured against it is meaningless."
+            )
+        # Only on macOS. On Linux the same flag usually compiles the probes to
+        # nothing, and the Debian build used on the other machine here measures
+        # the same as one without it.
+        if dtrace and sys.platform == "darwin":
+            return (
+                f"{self.name} resolved to {argv[0]}, which was built with "
+                "--with-dtrace. On macOS that puts the probes in the eval loop "
+                "and costs it about 3x, so it is not a baseline. Homebrew's "
+                "CPython is built this way. `uv python install 3.14` is not, and "
+                "`--at cpython=PATH` is how to point at it."
+            )
+        return None
+
     def version(self) -> str:
         if not self.available():
             return "not installed"
