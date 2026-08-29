@@ -123,6 +123,16 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if missing:
         print(f"not installed, skipping: {', '.join(missing)}", file=sys.stderr)
 
+    # Before anything is timed, because a report built from the wrong binary is
+    # worse than no report: every number in it is right except the one that
+    # matters, so it survives being read carefully.
+    wrong = [complaint for r in available if (complaint := r.misidentified())]
+    if wrong:
+        for complaint in wrong:
+            print(f"error: {complaint}", file=sys.stderr)
+        print("fix PATH, or pass the binary explicitly, and run again", file=sys.stderr)
+        return 2
+
     benchmarks = collect(args.suite)
     if not benchmarks:
         print(f"no benchmarks under {args.suite}", file=sys.stderr)

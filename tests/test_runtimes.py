@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -395,3 +396,32 @@ class TestEnvironment:
     def test_the_cpu_model_is_the_chip_not_the_architecture(self):
         """platform.processor() answers x86_64 on Linux, which names nothing."""
         assert cpu_model() != "x86_64"
+
+
+class TestIdentity:
+    """A binary found on PATH is asked what it is before it is trusted."""
+
+    def test_a_real_cpython_identifies_itself(self) -> None:
+        assert runtimes.CPYTHON.misidentified() is None
+
+    def test_a_runtime_that_is_not_a_python_is_not_asked(self) -> None:
+        # kohebi cannot import `sys` yet, so there is nothing to ask it.
+        assert runtimes.KOHEBI_RUN.implementation is None
+        assert runtimes.KOHEBI_RUN.misidentified() is None
+
+    def test_the_wrong_interpreter_under_the_right_name_is_caught(self) -> None:
+        # This is the failure it exists for: PyPy ships a `python3` beside its
+        # `pypy3`, so putting that directory on PATH makes `python3` PyPy.
+        impostor = replace(runtimes.PYPY, argv=(sys.executable,))
+        complaint = impostor.misidentified()
+        assert complaint is not None
+        assert "pypy" in complaint
+        assert "cpython" in complaint
+
+    def test_something_that_is_not_a_python_at_all_is_caught(self, tmp_path: Path) -> None:
+        binary = tmp_path / "python3"
+        binary.write_text("#!/bin/sh\nexit 0\n")
+        binary.chmod(0o755)
+        complaint = replace(runtimes.CPYTHON, argv=(str(binary),)).misidentified()
+        assert complaint is not None
+        assert "not a Python interpreter at all" in complaint

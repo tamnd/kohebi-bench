@@ -66,6 +66,10 @@ class Runtime:
     #: `argv` would not work. A runtime whose argv ends in a flag that takes a
     #: value would otherwise be asked to tokenize a file called `--version`.
     version_argv: tuple[str, ...] | None = None
+    #: What `sys.implementation.name` has to say for this to be the runtime it
+    #: claims to be. `None` for one that is not a Python interpreter, which is
+    #: kohebi until it can import `sys`.
+    implementation: str | None = None
 
     def available(self) -> bool:
         return which(self.argv[0]) is not None
@@ -77,6 +81,36 @@ class Runtime:
         binary that was actually timed cannot be two different things.
         """
         return (which(self.argv[0]) or self.argv[0], *self.argv[1:])
+
+    def misidentified(self) -> str | None:
+        """A complaint when the binary found is not the runtime it is named as.
+
+        Two reports have now been generated from the wrong interpreter. The
+        first found uv's CPython under `python3` instead of the machine's. The
+        second found PyPy under `python3`, because PyPy ships a `python3` beside
+        its `pypy3` and putting that directory on PATH is the obvious way to
+        make `pypy3` findable at all. Each produced a full report in which every
+        other number was correct, and the second one had CPython and PyPy within
+        a millisecond of each other on every benchmark, which is the only reason
+        anybody noticed.
+
+        A name on PATH cannot be trusted to say what a binary is. Asking the
+        interpreter costs one process and cannot be fooled.
+        """
+        if self.implementation is None or not self.available():
+            return None
+        argv = [*self.resolved(), "-c", "import sys; print(sys.implementation.name)"]
+        try:
+            proc = subprocess.run(argv, capture_output=True, text=True, timeout=60, check=False)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            return f"could not ask {argv[0]} what it is: {error}"
+        found = proc.stdout.strip()
+        if found == self.implementation:
+            return None
+        return (
+            f"{self.name} resolved to {argv[0]}, which reports itself as "
+            f"{found or 'not a Python interpreter at all'} rather than {self.implementation}"
+        )
 
     def version(self) -> str:
         if not self.available():
@@ -102,11 +136,20 @@ class Runtime:
 
 # The baseline is always CPython as shipped: current stable, default build,
 # release, no flags chosen to flatter us.
-CPYTHON = Runtime("cpython", ("python3",), "baseline: current stable, default build")
-CPYTHON_JIT = Runtime("cpython-jit", ("python3",), "PYTHON_JIT=1, their fastest config")
-CPYTHON_FT = Runtime("cpython-ft", ("python3t",), "free-threaded build")
-PYPY = Runtime("pypy", ("pypy3",), "the incumbent fast Python")
-GRAALPY = Runtime("graalpy", ("graalpy",), "the other incumbent, and the compatibility standard")
+CPYTHON = Runtime(
+    "cpython", ("python3",), "baseline: current stable, default build", implementation="cpython"
+)
+CPYTHON_JIT = Runtime(
+    "cpython-jit", ("python3",), "PYTHON_JIT=1, their fastest config", implementation="cpython"
+)
+CPYTHON_FT = Runtime("cpython-ft", ("python3t",), "free-threaded build", implementation="cpython")
+PYPY = Runtime("pypy", ("pypy3",), "the incumbent fast Python", implementation="pypy")
+GRAALPY = Runtime(
+    "graalpy",
+    ("graalpy",),
+    "the other incumbent, and the compatibility standard",
+    implementation="graalpy",
+)
 KOHEBI_RUN = Runtime("kohebi-run", ("kohebi", "run"), "JIT mode")
 KOHEBI_BUILD = Runtime("kohebi-build", ("kohebi", "build", "--run"), "AOT mode")
 
