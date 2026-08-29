@@ -425,3 +425,37 @@ class TestIdentity:
         complaint = replace(runtimes.CPYTHON, argv=(str(binary),)).misidentified()
         assert complaint is not None
         assert "not a Python interpreter at all" in complaint
+
+
+class TestPeakMemory:
+    """Where the peak comes from, and why it is not `ru_maxrss` on Linux."""
+
+    def test_a_child_is_not_charged_for_the_harness(self, tmp_path: Path) -> None:
+        # The bug this guards: on Linux the child inherits the parent's pages
+        # across `fork` and is charged for them, so a `/bin/true` spawned from a
+        # fat process reports the fat process's size. Ballast here makes the
+        # harness far larger than anything it measures, and the measurement has
+        # to stay small anyway.
+        program = tmp_path / "small.py"
+        program.write_text("pass\n")
+        ballast = bytearray(64 * 1024 * 1024)
+        ballast[::4096] = b"x" * (len(ballast) // 4096)
+        try:
+            run = runtimes._run_once([sys.executable, str(program)], dict(os.environ), 60.0)
+        finally:
+            del ballast
+        if run.peak_rss_bytes == 0:
+            pytest.skip("this platform does not report peak memory")
+        assert run.peak_rss_bytes < 48 * 1024 * 1024
+
+    def test_a_bigger_program_reports_a_bigger_peak(self, tmp_path: Path) -> None:
+        small = tmp_path / "small.py"
+        small.write_text("pass\n")
+        large = tmp_path / "large.py"
+        large.write_text("x = bytearray(64 * 1024 * 1024)\nx[::4096] = b'y' * (len(x) // 4096)\n")
+        env = dict(os.environ)
+        lean = runtimes._run_once([sys.executable, str(small)], env, 60.0)
+        fat = runtimes._run_once([sys.executable, str(large)], env, 60.0)
+        if lean.peak_rss_bytes == 0 or fat.peak_rss_bytes == 0:
+            pytest.skip("this platform does not report peak memory")
+        assert fat.peak_rss_bytes - lean.peak_rss_bytes > 32 * 1024 * 1024

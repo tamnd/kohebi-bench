@@ -208,6 +208,50 @@ def _rss_to_bytes(ru_maxrss: int) -> int:
     return ru_maxrss if sys.platform == "darwin" else ru_maxrss * 1024
 
 
+#: Whether this platform has the `/proc` entry that [`_watch_peak_rss`] reads.
+_HAS_PROC_STATUS = sys.platform.startswith("linux")
+
+
+def _watch_peak_rss(pid: int, seen: list[int], interval_s: float = 0.001) -> None:
+    """The kernel's own high-water mark for one process, until it exits.
+
+    On Linux `ru_maxrss` from `wait4` cannot be used for this at all, which took
+    a while to believe. A child inherits the parent's page tables across `fork`,
+    those pages are charged to the child, and the peak is recorded before `exec`
+    replaces them. So the number that comes back is the size of whatever spawned
+    the process, not the size of the process. Measured with a parent holding 200
+    MiB of ballast, `/bin/true` reports a peak of 213 MiB. `posix_spawn` does not
+    help: glibc implements it with `CLONE_VM`, so the child shares the parent's
+    address space until `exec` and is charged for it just the same.
+
+    This is why `/usr/bin/time` appears to work. It is a tiny program, so the
+    floor it imposes is small enough not to notice, and a harness written in
+    Python imposes a floor of twenty-odd megabytes onto a runtime whose whole
+    claim is using three.
+
+    `VmHWM` in `/proc/<pid>/status` is the same quantity measured correctly: the
+    kernel resets it at `exec`, so it covers the program that was asked for and
+    nothing before it. It is itself a high-water mark, so this does not have to
+    catch the peak as it happens, only to read once after it. The poll is on its
+    own thread and the timing still comes from a blocking wait, so nothing here
+    is folded into the elapsed time.
+
+    A process that exits before the first read leaves nothing behind, and that
+    is reported as unknown rather than as a plausible-looking zero.
+    """
+    path = f"/proc/{pid}/status"
+    while True:
+        try:
+            with open(path, encoding="ascii") as handle:
+                text = handle.read()
+        except OSError:
+            return
+        marker = "VmHWM:"
+        if marker in text:
+            seen.append(int(text.split(marker, 1)[1].split(maxsplit=1)[0]))
+        time.sleep(interval_s)
+
+
 @dataclass(frozen=True, slots=True)
 class _Run:
     elapsed_s: float
@@ -219,18 +263,24 @@ class _Run:
 def _run_once(argv: list[str], env: dict[str, str], timeout_s: float) -> _Run:
     """Run one child and get that child's own peak RSS.
 
-    `getrusage(RUSAGE_CHILDREN)` is tempting and wrong: it is a monotonic
-    high-water mark across every child the process has ever reaped, so the
-    memory number for PyPy would silently inherit CPython's peak from the
+    Where the peak comes from depends on the platform, and the reason is in
+    [`_watch_peak_rss`]. On Linux it is `VmHWM`, because `ru_maxrss` there is the
+    size of whatever did the spawning. On macOS it is `ru_maxrss`, which is
+    correct because `posix_spawn` is a real system call rather than a fork.
+
+    `getrusage(RUSAGE_CHILDREN)` is tempting and wrong on every platform: it is a
+    monotonic high-water mark across every child the process has ever reaped, so
+    the memory number for PyPy would silently inherit CPython's peak from the
     previous benchmark. `os.wait4` gives the rusage of one specific child.
 
-    Windows has no `wait4`, so memory is reported as unknown there rather than
-    as a plausible-looking wrong number.
+    Windows has no `wait4` and no `/proc`, so memory is reported as unknown there
+    rather than as a plausible-looking wrong number.
 
     The wait is blocking rather than a poll loop. Polling would fold the poll
     interval into every measurement, which is invisible on a one-second
     benchmark and ruinous on startup, where the whole quantity being measured
-    is a handful of milliseconds.
+    is a handful of milliseconds. The memory poll is on its own thread for the
+    same reason.
     """
     with (
         tempfile.TemporaryFile() as out,
@@ -238,6 +288,12 @@ def _run_once(argv: list[str], env: dict[str, str], timeout_s: float) -> _Run:
     ):
         started = time.perf_counter()
         proc = subprocess.Popen(argv, stdout=out, stderr=err, env=env)
+
+        seen: list[int] = []
+        watcher: threading.Thread | None = None
+        if _HAS_PROC_STATUS:
+            watcher = threading.Thread(target=_watch_peak_rss, args=(proc.pid, seen), daemon=True)
+            watcher.start()
 
         # Enforce the timeout out of band so the happy path stays a blocking wait.
         timed_out = False
@@ -260,6 +316,10 @@ def _run_once(argv: list[str], env: dict[str, str], timeout_s: float) -> _Run:
                 elapsed = time.perf_counter() - started
                 returncode = proc.returncode or 0
                 peak = 0
+            if _HAS_PROC_STATUS:
+                if watcher is not None:
+                    watcher.join(1.0)
+                peak = max(seen) * 1024 if seen else 0
         finally:
             killer.cancel()
 
