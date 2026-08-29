@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
 import pytest
 
+from kohebi_bench import runtimes
 from kohebi_bench.report import Report, cpu_model, describe_environment, publishable
 from kohebi_bench.runtimes import (
     CPYTHON,
@@ -128,6 +130,50 @@ class TestReport:
         assert "Failures" in markdown
         assert "failed" in markdown
 
+    def test_a_runtime_that_failed_everywhere_says_so_once(self):
+        """kohebi-build is a stub, and five copies of that fact is not a report."""
+        stub = "error: unexpected argument '--run' found"
+        report = Report(
+            baseline="cpython",
+            measurements=[
+                m
+                for name in ("a", "b", "c")
+                for m in (
+                    self._measurement("cpython", name, 1.0),
+                    Measurement("kohebi-build", name, Distribution(()), 0, True, stub),
+                )
+            ],
+        )
+        rows = [ln for ln in report.to_markdown().splitlines() if stub in ln]
+        assert len(rows) == 1
+        assert "every benchmark (3)" in rows[0]
+
+    def test_a_runtime_that_failed_on_one_benchmark_names_it(self):
+        report = Report(
+            baseline="cpython",
+            measurements=[
+                self._measurement("cpython", "a", 1.0),
+                self._measurement("cpython", "b", 1.0),
+                self._measurement("kohebi-run", "a", 0.5),
+                Measurement("kohebi-run", "b", Distribution(()), 0, True, "NotImplementedError"),
+            ],
+        )
+        row = next(ln for ln in report.to_markdown().splitlines() if "NotImplementedError" in ln)
+        assert "`b`" in row
+        assert "every benchmark" not in row
+
+    def test_two_runtimes_failing_the_same_way_are_not_merged(self):
+        report = Report(
+            baseline="cpython",
+            measurements=[
+                self._measurement("cpython", "a", 1.0),
+                Measurement("kohebi-run", "a", Distribution(()), 0, True, "boom"),
+                Measurement("pypy", "a", Distribution(()), 0, True, "boom"),
+            ],
+        )
+        rows = [ln for ln in report.to_markdown().splitlines() if "boom" in ln]
+        assert len(rows) == 2
+
     def test_markdown_always_reports_memory(self):
         report = Report(
             baseline="cpython",
@@ -162,6 +208,53 @@ class TestBinaryOverride:
     def test_someone_elses_runtime_is_left_alone(self):
         """`--kohebi` must not repoint python3 at the kohebi binary."""
         assert at(CPYTHON, "/opt/kohebi") == CPYTHON
+
+
+class TestLookup:
+    """`uv run` puts a second Python in front of the one being benchmarked."""
+
+    def test_the_harness_venv_is_not_where_the_baseline_comes_from(self, tmp_path, monkeypatch):
+        venv = tmp_path / "venv"
+        real = tmp_path / "usr"
+        for d in (venv / "bin", real):
+            d.mkdir(parents=True)
+        for d in (venv / "bin", real):
+            exe = d / "python3"
+            exe.write_text("#!/bin/sh\n")
+            exe.chmod(0o755)
+
+        monkeypatch.setattr(runtimes.sys, "prefix", str(venv))
+        monkeypatch.setattr(runtimes.sys, "base_prefix", str(tmp_path / "base"))
+        monkeypatch.setenv("PATH", f"{venv / 'bin'}{os.pathsep}{real}")
+
+        assert runtimes.which("python3") == str(real / "python3")
+
+    def test_outside_a_venv_the_first_match_wins(self, tmp_path, monkeypatch):
+        first = tmp_path / "first"
+        first.mkdir()
+        exe = first / "python3"
+        exe.write_text("#!/bin/sh\n")
+        exe.chmod(0o755)
+
+        monkeypatch.setattr(runtimes.sys, "prefix", str(tmp_path))
+        monkeypatch.setattr(runtimes.sys, "base_prefix", str(tmp_path))
+        monkeypatch.setenv("PATH", str(first))
+
+        assert runtimes.which("python3") == str(exe)
+
+    def test_a_path_the_caller_chose_is_taken_as_given(self, tmp_path):
+        """`--kohebi target/release/kohebi` must not be searched for on PATH."""
+        exe = tmp_path / "kohebi"
+        exe.write_text("#!/bin/sh\n")
+        exe.chmod(0o755)
+        assert runtimes.which(str(exe)) == str(exe)
+        assert runtimes.which(str(tmp_path / "absent")) is None
+
+    def test_the_timed_binary_is_the_one_the_version_came_from(self):
+        """Two PATH lookups can disagree. One resolution cannot."""
+        resolved = CPYTHON.resolved()
+        assert os.sep in resolved[0]
+        assert os.access(resolved[0], os.X_OK)
 
 
 class TestGoal:

@@ -271,9 +271,21 @@ class Report:
                 "| Benchmark | Runtime | Error |",
                 "| --- | --- | --- |",
             ]
+            # A runtime that failed on everything failed for one reason, and
+            # printing that reason once per benchmark buries the runtime that
+            # failed on only one of them, which is the interesting case.
+            total = len(self.by_benchmark())
+            grouped: dict[tuple[str, str], list[str]] = {}
             for m in failures:
                 first = m.error.splitlines()[0][:120] if m.error else ""
-                lines.append(f"| `{m.benchmark}` | {m.runtime} | {first} |")
+                grouped.setdefault((m.runtime, first), []).append(m.benchmark)
+            for (runtime, error), benchmarks in grouped.items():
+                where = (
+                    f"every benchmark ({total})"
+                    if len(benchmarks) == total > 1
+                    else ", ".join(f"`{b}`" for b in sorted(benchmarks))
+                )
+                lines.append(f"| {where} | {runtime} | {error} |")
 
         return "\n".join(lines) + "\n"
 
