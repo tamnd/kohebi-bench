@@ -20,6 +20,41 @@ from pathlib import Path
 from .stats import Distribution
 
 
+def _harness_bin() -> Path | None:
+    """The bin directory of the virtual environment this harness runs from.
+
+    `None` when it is not running from one.
+    """
+    if sys.prefix == sys.base_prefix:
+        return None
+    return Path(sys.prefix) / ("Scripts" if os.name == "nt" else "bin")
+
+
+def which(binary: str) -> str | None:
+    """`binary` on PATH, ignoring the virtual environment this harness runs from.
+
+    `uv run kohebi-bench` puts `.venv/bin` at the front of PATH, and there is a
+    `python3` in there. Left alone, the lookup finds that one, so the baseline
+    quietly stops being the CPython on the machine and becomes whichever
+    interpreter uv happened to install for the harness. The first report
+    generated this way claimed a 3.13 baseline on a machine whose `python3` is
+    3.14, which is the kind of error that survives review because every other
+    number in the report is right.
+
+    A name containing a separator is a path the caller chose and is taken as
+    given, which is what `--kohebi target/release/kohebi` relies on.
+    """
+    if os.sep in binary or (os.altsep and os.altsep in binary):
+        return binary if os.access(binary, os.X_OK) else None
+    skip = _harness_bin()
+    entries = [
+        entry
+        for entry in os.environ.get("PATH", os.defpath).split(os.pathsep)
+        if entry and (skip is None or Path(entry) != skip)
+    ]
+    return shutil.which(binary, path=os.pathsep.join(entries))
+
+
 @dataclass(frozen=True, slots=True)
 class Runtime:
     """One interpreter or compiler under test."""
@@ -33,14 +68,27 @@ class Runtime:
     version_argv: tuple[str, ...] | None = None
 
     def available(self) -> bool:
-        return shutil.which(self.argv[0]) is not None
+        return which(self.argv[0]) is not None
+
+    def resolved(self) -> tuple[str, ...]:
+        """`argv` with the binary as a path rather than a name to look up.
+
+        Resolved once, here, so that the version recorded in the report and the
+        binary that was actually timed cannot be two different things.
+        """
+        return (which(self.argv[0]) or self.argv[0], *self.argv[1:])
 
     def version(self) -> str:
         if not self.available():
             return "not installed"
+        argv = self.version_argv
+        if argv is None:
+            argv = (*self.resolved(), "--version")
+        else:
+            argv = (which(argv[0]) or argv[0], *argv[1:])
         try:
             proc = subprocess.run(
-                list(self.version_argv or (*self.argv, "--version")),
+                list(argv),
                 capture_output=True,
                 text=True,
                 timeout=60,
@@ -195,7 +243,7 @@ def measure(
     reason the confidence intervals mean anything.
     """
     full_env = {**os.environ, "PYTHONHASHSEED": "0", **(env or {})}
-    argv = [*runtime.argv, str(benchmark)]
+    argv = [*runtime.resolved(), str(benchmark)]
     samples: list[float] = []
     peak = 0
 
