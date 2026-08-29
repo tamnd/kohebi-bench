@@ -14,6 +14,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -172,6 +173,22 @@ def at(runtime: Runtime, binary: str) -> Runtime:
     that quietly measured last week's build.
     """
     if runtime.name not in OURS:
+        return runtime
+    return replace(runtime, argv=(binary, *runtime.argv[1:]))
+
+
+def located(runtime: Runtime, where: Mapping[str, str]) -> Runtime:
+    """The same runtime run from a binary the caller named.
+
+    PATH cannot reach a particular interpreter when several are installed, and
+    the honest answer is to say which one you meant. CI installs CPython, PyPy
+    and GraalPy into one job, and the last one set up owns `python3`, so the
+    baseline column of every CI report so far was measuring GraalPy under
+    CPython's name. `--at cpython=python3.14` is how a caller says which one it
+    meant rather than hoping.
+    """
+    binary = where.get(runtime.name)
+    if binary is None:
         return runtime
     return replace(runtime, argv=(binary, *runtime.argv[1:]))
 

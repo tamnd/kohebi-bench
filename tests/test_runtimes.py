@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from kohebi_bench import runtimes
+from kohebi_bench.__main__ import main
 from kohebi_bench.report import Report, cpu_model, describe_environment, publishable
 from kohebi_bench.runtimes import (
     CPYTHON,
@@ -401,8 +402,15 @@ class TestEnvironment:
 class TestIdentity:
     """A binary found on PATH is asked what it is before it is trusted."""
 
-    def test_a_real_cpython_identifies_itself(self) -> None:
-        assert runtimes.CPYTHON.misidentified() is None
+    def test_an_interpreter_that_is_what_it_says_is_accepted(self) -> None:
+        # Whichever interpreter is running the tests, asked whether it is
+        # itself. Not `CPYTHON` as it stands, because `python3` is not CPython
+        # in every job that runs this: CI installs PyPy and GraalPy alongside
+        # it and the last one set up owns the name.
+        honest = replace(
+            runtimes.CPYTHON, argv=(sys.executable,), implementation=sys.implementation.name
+        )
+        assert honest.misidentified() is None
 
     def test_a_runtime_that_is_not_a_python_is_not_asked(self) -> None:
         # kohebi cannot import `sys` yet, so there is nothing to ask it.
@@ -412,11 +420,12 @@ class TestIdentity:
     def test_the_wrong_interpreter_under_the_right_name_is_caught(self) -> None:
         # This is the failure it exists for: PyPy ships a `python3` beside its
         # `pypy3`, so putting that directory on PATH makes `python3` PyPy.
-        impostor = replace(runtimes.PYPY, argv=(sys.executable,))
+        claimed = "cpython" if sys.implementation.name != "cpython" else "pypy"
+        impostor = replace(runtimes.PYPY, argv=(sys.executable,), implementation=claimed)
         complaint = impostor.misidentified()
         assert complaint is not None
-        assert "pypy" in complaint
-        assert "cpython" in complaint
+        assert sys.implementation.name in complaint
+        assert claimed in complaint
 
     def test_something_that_is_not_a_python_at_all_is_caught(self, tmp_path: Path) -> None:
         binary = tmp_path / "python3"
@@ -427,26 +436,58 @@ class TestIdentity:
         assert "not a Python interpreter at all" in complaint
 
 
+class TestNamingABinary:
+    """`--at NAME=PATH`, for a machine where PATH cannot reach what you meant."""
+
+    def test_a_named_runtime_moves_to_the_binary_given(self) -> None:
+        moved = runtimes.located(runtimes.CPYTHON, {"cpython": "python3.14"})
+        assert moved.argv == ("python3.14",)
+        assert moved.implementation == "cpython"
+
+    def test_the_arguments_after_the_binary_survive(self) -> None:
+        # kohebi-run is `kohebi run`, and only the first word is the binary.
+        moved = runtimes.located(runtimes.KOHEBI_RUN, {"kohebi-run": "target/release/kohebi"})
+        assert moved.argv == ("target/release/kohebi", "run")
+
+    def test_a_runtime_nobody_named_is_left_alone(self) -> None:
+        assert runtimes.located(runtimes.PYPY, {"cpython": "python3.14"}) is runtimes.PYPY
+
+    def test_a_malformed_pair_is_rejected_before_anything_is_timed(self) -> None:
+        with pytest.raises(SystemExit):
+            main(["run", "--at", "python3.14", "benchmarks"])
+
+    def test_a_name_that_is_not_a_runtime_is_rejected(self) -> None:
+        with pytest.raises(SystemExit):
+            main(["run", "--at", "cython=cython", "benchmarks"])
+
+
 class TestPeakMemory:
     """Where the peak comes from, and why it is not `ru_maxrss` on Linux."""
 
     def test_a_child_is_not_charged_for_the_harness(self, tmp_path: Path) -> None:
         # The bug this guards: on Linux the child inherits the parent's pages
         # across `fork` and is charged for them, so a `/bin/true` spawned from a
-        # fat process reports the fat process's size. Ballast here makes the
-        # harness far larger than anything it measures, and the measurement has
-        # to stay small anyway.
+        # fat process reports the fat process's size.
+        #
+        # The same trivial program twice, once from a lean harness and once from
+        # a fat one, rather than one run against a fixed ceiling. An empty
+        # program does not cost the same under every interpreter that runs these
+        # tests: CPython starts in about 10 MiB, PyPy in 56 and GraalPy in 177,
+        # so any threshold that means something under one of them means nothing
+        # under another. What has to hold is that the ballast does not show up.
         program = tmp_path / "small.py"
         program.write_text("pass\n")
+        env = dict(os.environ)
+        lean = runtimes._run_once([sys.executable, str(program)], env, 60.0)
         ballast = bytearray(64 * 1024 * 1024)
         ballast[::4096] = b"x" * (len(ballast) // 4096)
         try:
-            run = runtimes._run_once([sys.executable, str(program)], dict(os.environ), 60.0)
+            fat = runtimes._run_once([sys.executable, str(program)], env, 60.0)
         finally:
             del ballast
-        if run.peak_rss_bytes == 0:
+        if lean.peak_rss_bytes == 0 or fat.peak_rss_bytes == 0:
             pytest.skip("this platform does not report peak memory")
-        assert run.peak_rss_bytes < 48 * 1024 * 1024
+        assert abs(fat.peak_rss_bytes - lean.peak_rss_bytes) < 16 * 1024 * 1024
 
     def test_a_bigger_program_reports_a_bigger_peak(self, tmp_path: Path) -> None:
         small = tmp_path / "small.py"

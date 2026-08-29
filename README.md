@@ -30,10 +30,13 @@ $ kohebi-bench run                                    # every installed runtime,
 $ kohebi-bench run --runtime cpython --runtime pypy   # just these two
 $ kohebi-bench run benchmarks/micro --runs 50 --out results/local
 $ kohebi-bench run benchmarks/tier0 --kohebi ../kohebi/target/release/kohebi
+$ kohebi-bench run --at cpython=python3.14 --at pypy=pypy3.11
 $ kohebi-bench lex --kohebi ../kohebi/target/release/kohebi
 ```
 
 `--kohebi` points the `kohebi-run` and `kohebi-build` rows at a particular binary. Nobody installs kohebi before benchmarking a change to it, and without the flag the report quietly measures whichever build happens to be on PATH.
+
+`--at NAME=PATH` does the same for any other row. On a machine with one Python this is not needed. On one with several it is the only honest way to say which you meant, because PATH gives `python3` to whichever was installed last and that is very often not CPython.
 
 Runtimes that are not installed are skipped with a note rather than silently omitted. A benchmark that fails or times out is recorded as a failure and appears in the report, because a runtime that cannot run a benchmark has not won it.
 
