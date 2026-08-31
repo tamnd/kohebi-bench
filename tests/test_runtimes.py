@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -540,3 +541,54 @@ class TestPeakMemory:
         if lean.peak_rss_bytes == 0 or fat.peak_rss_bytes == 0:
             pytest.skip("this platform does not report peak memory")
         assert fat.peak_rss_bytes - lean.peak_rss_bytes > 32 * 1024 * 1024
+
+
+class TestRemoteRunner:
+    """`scripts/bench-on.sh`, which is how every published number is produced.
+
+    The script is not importable and is not run here, but the one thing about
+    it that has already broken once is the argument order it builds, and that
+    is checkable without a remote machine.
+    """
+
+    @staticmethod
+    def _argv(command: list[str], out: Path) -> list[str]:
+        """The argv the script hands the harness, read out of the script."""
+        text = (HERE.parent / "scripts" / "bench-on.sh").read_text()
+        tail = text.split("-m kohebi_bench", 1)[1].split('"', 1)[0]
+        argv: list[str] = []
+        for word in shlex.split(tail):
+            if word == "$*":
+                argv.extend(command)
+            else:
+                argv.append(word.replace("$remote_dir/out", str(out)))
+        return argv
+
+    def test_the_arguments_it_builds_are_ones_the_cli_accepts(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # The bug: `--out` belongs to the subcommand, so putting it in front of
+        # `run` made argparse read `run` as its value and refuse the whole line.
+        # Nobody noticed until the script was first given a suite to run, since
+        # before that a refusal and a clean run looked alike from outside.
+        #
+        # A suite that is not there, so this stops at the first thing after
+        # parsing rather than measuring anything. Reaching that check at all is
+        # the assertion: it means the command, the suite and every flag were
+        # read the way they were meant.
+        out = tmp_path / "out"
+        argv = self._argv(["run", str(tmp_path / "gone"), "--runs", "1"], out)
+        assert argv[-2:] == ["--out", str(out)], argv
+
+        with pytest.raises(SystemExit):
+            main(argv)
+        assert "is not a directory" in capsys.readouterr().err
+
+    def test_an_option_in_front_of_the_command_is_refused(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # The shape the script used to build, kept as a test so that putting it
+        # back is a failure rather than a report that never arrives.
+        with pytest.raises(SystemExit):
+            main(["--out", str(tmp_path), "run", str(tmp_path)])
+        assert "invalid choice" in capsys.readouterr().err
