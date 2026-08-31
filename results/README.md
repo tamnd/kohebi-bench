@@ -27,19 +27,35 @@ The harness refuses to run against it now. `Runtime.crippled` asks CPython how i
 
 ## Where it actually stands
 
-Re-run against a build without the probes, the two machines now say roughly the same thing. Speed as a multiple of CPython, higher is better:
+The whole tier0 suite on the i9, every runtime in the same run, speed as a multiple of CPython 3.14.4, higher is better. The Air is not in this table because its last run predates half of these benchmarks and the harness marked most of what it did measure as not significant.
 
-| Benchmark | Air | i9 |
-| --- | ---: | ---: |
-| `branch_dispatch` | 0.86x | 0.46x |
-| `float_loop` | 0.66x | 0.46x |
-| `int_loop` | 0.82x | 0.46x |
-| `iterate` | 1.12x | 0.60x |
-| `list_grow` | 1.07x | 0.77x |
-| `list_index` | 0.81x | 0.60x |
-| `str_ops` | 0.42x | 0.61x |
-| `startup` | 5.01x | 9.75x |
+| Benchmark | kohebi | pypy | graalpy |
+| --- | ---: | ---: | ---: |
+| `branch_dispatch` | 0.36x | 4.62x | 0.55x |
+| `call` | 0.31x | 2.10x | 0.23x |
+| `comprehension` | 0.21x | 0.99x | 0.28x |
+| `exceptions` | 0.45x | 1.41x | 0.35x |
+| `float_loop` | 0.37x | 3.85x | 0.60x |
+| `generators` | 0.33x | 1.51x | 0.36x |
+| `int_loop` | 0.36x | 7.57x | 0.93x |
+| `iterate` | 0.46x | 4.69x | 0.58x |
+| `list_grow` | 0.59x | 2.54x | 0.61x |
+| `list_index` | 0.42x | 4.16x | 0.53x |
+| `str_ops` | 0.51x | 4.23x | 0.46x |
+| **geomean** | **0.38x** | **2.91x** | **0.46x** |
 
-So kohebi is somewhere between a half and level with CPython on work, well ahead of it on starting, and at about a third of its memory. Against a goal of 10x on 0.1x memory, memory is the half that is going well without anyone working on it and speed is the half that has not started: this is a tier zero interpreter with no quickening, no inline caches and no assumption about what a register held last time, and it is deliberately the slowest thing the project will ever ship.
+And the other half of the goal, peak memory as a multiple of CPython, lower is better:
 
-The remaining spread between the two machines is the interesting part of what is left. Moving from the Air to the i9 makes CPython 2.1x to 3.2x faster and makes kohebi 1.19x to 1.28x faster on the benchmarks that are nothing but a loop, which is about the clock ratio between the two chips and nothing more. It is not a codegen target: rebuilding on the i9 with `-C target-cpu=native` rather than the generic `x86-64` baseline moves nothing beyond run to run variation. A profile on the i9 puts about a fifth of the time in the register file and about a tenth in cloning and dropping an `Object`, which is the object representation and the dispatch loop rather than any one operator, and both of those are what tier one exists to fix.
+| Runtime | Peak memory |
+| --- | ---: |
+| kohebi | 0.56x |
+| pypy | 5.84x |
+| graalpy | 20.21x |
+
+Read those two tables together, because separately each of them is an advertisement. kohebi is the leanest of the four including CPython, and it is the slowest of the four. PyPy is the one to beat on speed and is nearly six times CPython's memory to get there. GraalPy is slower than CPython on nine of eleven and carries twenty times its memory. Nobody in this table has both halves, which is the whole reason the project has two columns rather than one.
+
+Against 10x on 0.1x, that leaves 26.1x faster and 5.6x leaner to find. The speed half has not started: this is a tier zero interpreter with no quickening, no inline caches and no assumption about what a register held last time, and it is deliberately the slowest thing the project will ever ship. What it does say is where the floor is, and the floor is uneven. kohebi is already ahead of GraalPy on calls, exceptions and string operations, and behind it by nearly three to one on an integer loop, which is the one thing a JIT compiles first and the one place a tier zero interpreter has nothing to offer.
+
+The two worst numbers are the interesting ones. `comprehension` at 0.21x is the lowest in the table and a comprehension here is lowered to a function and a loop, so it pays a call that CPython does not. `int_loop` at 0.36x against GraalPy's 0.93x is the dispatch loop and the object representation and nothing else. A profile on this machine puts about a fifth of the time in the register file and about a tenth in cloning and dropping an `Object`, which agrees with that reading, and both are what tier one exists to fix. It is not a codegen target: rebuilding with `-C target-cpu=native` rather than the generic `x86-64` baseline moves nothing beyond run to run variation.
+
+`kohebi build` fails on all eleven, because it has no way to run what it produced yet. Until it does, the AOT column is a row of failures rather than a missing column, which is the honest way to show it.
